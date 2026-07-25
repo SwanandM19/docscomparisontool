@@ -9,6 +9,8 @@ export interface UserDoc extends MongooseDocument {
   department: string | null;
   organization: string | null;
   phone: string | null;
+  // [ADMIN-APPROVAL] Remove this field to fully retire the approval-gate feature.
+  approved: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -22,6 +24,8 @@ const UserSchema = new Schema<UserDoc>(
     department: { type: String, default: null },
     organization: { type: String, default: null },
     phone: { type: String, default: null },
+    // [ADMIN-APPROVAL] Remove this field to fully retire the approval-gate feature.
+    approved: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );

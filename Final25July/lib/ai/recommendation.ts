@@ -2,6 +2,7 @@ import { z } from "zod";
 import { generateJson } from "@/lib/ai/gemini";
 import { ApiError } from "@/lib/api-utils/errors";
 import type { ComparisonDoc } from "@/lib/models/Comparison";
+import type { ComparisonMode } from "@/types/comparison";
 
 const recommendationSchema = z.object({
   decision: z.enum(["Approve", "Hold", "Reject"]),
@@ -10,12 +11,31 @@ const recommendationSchema = z.object({
 
 export type Recommendation = z.infer<typeof recommendationSchema>;
 
-const SYSTEM_INSTRUCTION = `You are an AI procurement approval assistant. Given a deterministic
-document comparison result (already computed — you are NOT recomputing the comparison, only
-recommending an action), decide whether the invoice/document set should be Approved, Held for
-review, or Rejected. Base your decision only on the provided data. Respond with ONLY a JSON
-object: { "decision": "Approve" | "Hold" | "Reject", "reason": string }. The reason must be one
-or two sentences, specific to the actual discrepancies found, written for a finance approver.`;
+// "2-way"/"3-way" are procurement-specific; "universal"/"contract" get
+// neutral wording so the recommendation doesn't talk about "vendors" and
+// "payment" for documents that were never invoices in the first place.
+function isProcurementMode(mode: ComparisonMode): boolean {
+  return mode === "2-way" || mode === "3-way";
+}
+
+function buildSystemInstruction(mode: ComparisonMode): string {
+  if (isProcurementMode(mode)) {
+    return `You are an AI procurement approval assistant. Given a deterministic document
+comparison result (already computed — you are NOT recomputing the comparison, only recommending
+an action), decide whether the invoice/document set should be Approved, Held for review, or
+Rejected. Base your decision only on the provided data. Respond with ONLY a JSON object:
+{ "decision": "Approve" | "Hold" | "Reject", "reason": string }. The reason must be one or two
+sentences, specific to the actual discrepancies found, written for a finance approver.`;
+  }
+  return `You are an AI document review assistant. Given a deterministic document comparison
+result (already computed — you are NOT recomputing the comparison, only recommending an action),
+decide whether the document pair should be Approved as consistent, Held for manual review, or
+Rejected due to material discrepancies. Base your decision only on the provided data. Respond
+with ONLY a JSON object: { "decision": "Approve" | "Hold" | "Reject", "reason": string }. The
+reason must be one or two sentences, specific to the actual discrepancies found, written for a
+business reviewer — do not reference vendors, invoices, or payments unless the data actually
+shows them.`;
+}
 
 /**
  * Fallback deterministic rule used if the AI call fails or returns something
@@ -23,21 +43,27 @@ or two sentences, specific to the actual discrepancies found, written for a fina
  * than blocking the whole comparison flow.
  */
 function deterministicFallback(comparison: ComparisonDoc): Recommendation {
+  const procurement = isProcurementMode(comparison.mode);
+
   if (comparison.score.status === "Failed") {
     return {
       decision: "Reject",
-      reason: `Match score of ${comparison.score.matchScore}% falls below the acceptable threshold, indicating material discrepancies that require vendor correction before payment.`,
+      reason: procurement
+        ? `Match score of ${comparison.score.matchScore}% falls below the acceptable threshold, indicating material discrepancies that require vendor correction before payment.`
+        : `Match score of ${comparison.score.matchScore}% falls below the acceptable threshold, indicating material discrepancies between the documents that need to be resolved.`,
     };
   }
   if (comparison.score.status === "Partial") {
     return {
       decision: "Hold",
-      reason: `Match score of ${comparison.score.matchScore}% with ${comparison.lineItemDiffs.filter((d) => d.qtyVariance || d.priceVariance).length} line-item variance(s) detected — recommend manual review before approval.`,
+      reason: `Match score of ${comparison.score.matchScore}% with ${comparison.lineItemDiffs.filter((d) => d.qtyVariance || d.priceVariance).length} variance(s) detected — recommend manual review before proceeding.`,
     };
   }
   return {
     decision: "Approve",
-    reason: `All fields and line items matched within configured tolerances (${comparison.score.matchScore}% match score). Safe to approve for payment.`,
+    reason: procurement
+      ? `All fields and line items matched within configured tolerances (${comparison.score.matchScore}% match score). Safe to approve for payment.`
+      : `All fields matched within configured tolerances (${comparison.score.matchScore}% match score). The documents are consistent.`,
   };
 }
 
@@ -62,7 +88,7 @@ Recommend Approve, Hold, or Reject with a one-to-two sentence reason.`;
 
   try {
     const raw = await generateJson<unknown>([prompt], {
-      systemInstruction: SYSTEM_INSTRUCTION,
+      systemInstruction: buildSystemInstruction(comparison.mode),
       temperature: 0.2,
       timeoutMs: 25_000,
     });

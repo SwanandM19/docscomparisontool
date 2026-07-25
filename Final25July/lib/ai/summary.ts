@@ -1,11 +1,29 @@
 import { generateText } from "@/lib/ai/gemini";
 import type { ComparisonDoc } from "@/lib/models/Comparison";
+import type { ComparisonMode } from "@/types/comparison";
 
-const SYSTEM_INSTRUCTION = `You are a senior procurement auditor writing a concise, decision-focused
-executive summary for business users — procurement managers, finance teams, auditors, and
-executives. Most of these readers will only skim, not read paragraphs, so the summary MUST be
-scannable. Be precise, objective, and professional, and ground every statement strictly in the
-structured comparison data you are given — never invent numbers or claims not present in the data.
+/**
+ * The "2-way"/"3-way" procurement modes get procurement-specific framing;
+ * "universal"/"contract" get a neutral persona instead — otherwise the AI
+ * calls every comparison a "procurement audit" even when the documents have
+ * nothing to do with purchase orders or invoices.
+ */
+function personaFor(mode: ComparisonMode): string {
+  if (mode === "contract") {
+    return "a senior contracts analyst comparing a base contract against a revised draft or redline";
+  }
+  if (mode === "universal") {
+    return "a senior document analyst comparing two general business documents for consistency";
+  }
+  return "a senior procurement auditor";
+}
+
+function buildSystemInstruction(mode: ComparisonMode): string {
+  return `You are ${personaFor(mode)}, writing a concise, decision-focused
+executive summary for business users — managers, auditors, and executives. Most of these readers
+will only skim, not read paragraphs, so the summary MUST be scannable. Be precise, objective, and
+professional, and ground every statement strictly in the structured comparison data you are
+given — never invent numbers or claims not present in the data.
 
 Required output format (plain text, not markdown):
 1. One or two short lead-in sentences giving the overall verdict and headline financial impact (if
@@ -26,11 +44,13 @@ Content rules:
 - Ignore formatting, capitalization, spacing, and insignificant wording differences.
 - Mention financial impact only if it exists, and always in Indian Rupees (₹), never dollars/$.
 - Mention missing or additional items only if present.
-- Mention vendor, customer, contract, payment, tax, quantity, price, total, or date differences
-  only when they materially affect the transaction.
+- Only mention fields that are actually present and populated in the data (vendor, customer,
+  contract clause, payment, tax, quantity, price, total, date, etc.) — never call out a field as
+  "missing" or "inconsistent" just because it doesn't apply to this document type.
 - If the documents are highly similar, explicitly state in a bullet that no material discrepancies
   were identified — do not omit the bullet list even when everything matches.
 - If significant discrepancies exist, add a bullet explaining their potential business impact.`;
+}
 
 export async function generateExecutiveSummary(comparison: ComparisonDoc): Promise<string> {
   const prompt = `Here is a document comparison result in JSON:
@@ -53,5 +73,9 @@ ${JSON.stringify(
 
 Write the executive summary per your instructions.`;
 
-  return generateText([prompt], { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0.4, timeoutMs: 30_000 });
+  return generateText([prompt], {
+    systemInstruction: buildSystemInstruction(comparison.mode),
+    temperature: 0.4,
+    timeoutMs: 30_000,
+  });
 }

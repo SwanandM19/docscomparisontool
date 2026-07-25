@@ -13,6 +13,8 @@ import HistoryAudits from "@/components/dashboard/history-audits";
 import VendorAnalytics from "@/components/dashboard/vendor-analytics";
 import ToleranceSettings from "@/components/dashboard/tolerance-settings";
 import UserProfile from "@/components/dashboard/user-profile";
+// [ADMIN-APPROVAL] Remove this import + its "approvals" entries below to retire the feature.
+import UserApprovals from "@/components/dashboard/user-approvals";
 
 interface PageConfig {
   id: string;
@@ -61,6 +63,14 @@ const pages: Record<string, PageConfig> = {
     breadcrumbs: [
       { label: "DocIntel", href: "/dashboard" },
       { label: "User Profile" },
+    ],
+  },
+  // [ADMIN-APPROVAL] Remove this entry to retire the feature.
+  approvals: {
+    id: "approvals",
+    breadcrumbs: [
+      { label: "DocIntel", href: "/dashboard" },
+      { label: "User Approvals" },
     ],
   },
 };
@@ -144,6 +154,9 @@ export default function DashboardPage() {
         return <ToleranceSettings />;
       case "profile":
         return <UserProfile />;
+      // [ADMIN-APPROVAL] Remove this case to retire the feature.
+      case "approvals":
+        return <UserApprovals />;
       default:
         return <DashboardOverview onNavigate={handleNavigate} onViewComparison={handleViewComparison} />;
     }

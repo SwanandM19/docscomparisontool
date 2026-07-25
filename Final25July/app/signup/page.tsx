@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Check,
   X,
+  Clock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,9 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // [ADMIN-APPROVAL] Remove this state + its branch in handleSubmit and the
+  // pending-screen JSX block below to retire the feature.
+  const [pendingApproval, setPendingApproval] = useState(false);
 
   const [touched, setTouched] = useState({ name: false, email: false, password: false, confirmPassword: false });
   const markTouched = (field: keyof typeof touched) => setTouched((t) => ({ ...t, [field]: true }));
@@ -75,7 +79,14 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
-      await signup({ name: name.trim(), email: email.trim(), password });
+      const result = await signup({ name: name.trim(), email: email.trim(), password });
+      // [ADMIN-APPROVAL] Delete this if-block to retire the feature — the
+      // signup() call always logs the new user in immediately otherwise.
+      if ("pendingApproval" in result) {
+        setPendingApproval(true);
+        setLoading(false);
+        return;
+      }
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
@@ -83,6 +94,32 @@ export default function SignupPage() {
       setLoading(false);
     }
   };
+
+  // [ADMIN-APPROVAL] Delete this whole if-block to retire the feature.
+  if (pendingApproval) {
+    return (
+      <div className="min-h-screen flex items-center justify-center grid-background px-4">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-brand/10 rounded-full blur-[80px] -z-10 pointer-events-none" />
+        <div className="w-full max-w-[420px] animate-fade-in-up text-center">
+          <Card className="border-border/80 shadow-xl bg-card/85 backdrop-blur-xl">
+            <CardContent className="pt-8 pb-8 flex flex-col items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center">
+                <Clock className="w-6 h-6 text-warning" />
+              </div>
+              <h2 className="text-base font-semibold">Account created — pending approval</h2>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                Your account has been created but needs to be approved by an administrator before
+                you can sign in. You'll be able to log in once that happens.
+              </p>
+              <a href="/login" className="text-xs font-semibold text-brand hover:underline mt-2">
+                Back to sign in
+              </a>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center grid-background px-4">

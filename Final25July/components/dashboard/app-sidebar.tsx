@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Sparkles,
   Layers,
+  UserCheck,
 } from "lucide-react";
 import {
   Tooltip,
@@ -20,6 +21,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useProcessingRegistry } from "@/lib/hooks/processing-registry";
+import { useSession } from "@/lib/hooks/use-session";
 
 interface NavItem {
   id: string;
@@ -28,6 +30,9 @@ interface NavItem {
   href: string;
   badge?: string;
   badgeVariant?: "default" | "accent" | "success";
+  // [ADMIN-APPROVAL] Remove this field + the "User Approvals" nav item below
+  // to retire the feature.
+  adminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -57,6 +62,14 @@ const navItems: NavItem[] = [
     icon: BarChart3,
     href: "/analytics",
   },
+  // [ADMIN-APPROVAL] Remove this nav item to retire the feature.
+  {
+    id: "approvals",
+    label: "User Approvals",
+    icon: UserCheck,
+    href: "/approvals",
+    adminOnly: true,
+  },
 ];
 
 interface AppSidebarProps {
@@ -71,6 +84,8 @@ export default function AppSidebar({ activeItem, onNavigate }: AppSidebarProps) 
   const activeCount = activeJobs.length;
   const avgProgress =
     activeCount > 0 ? Math.round(activeJobs.reduce((sum, j) => sum + j.progress, 0) / activeCount) : 0;
+  const { user } = useSession();
+  const visibleNavItems = navItems.filter((item) => !item.adminOnly || user?.role === "admin");
 
   return (
     <aside
@@ -105,7 +120,7 @@ export default function AppSidebar({ activeItem, onNavigate }: AppSidebarProps) 
             Navigation
           </p>
         )}
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = activeItem === item.id;
           const Icon = item.icon;
 

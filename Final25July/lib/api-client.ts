@@ -216,8 +216,14 @@ export function deleteToleranceRule(id: string) {
 }
 
 // ── /api/auth ──
+// [ADMIN-APPROVAL] The `{ pendingApproval: true }` branch of this return type
+// only exists for that feature — narrow this back to plain `SessionUser` if
+// it's retired.
 export function signup(payload: { name: string; email: string; password: string }) {
-  return request<SessionUser>("/api/auth/signup", { method: "POST", body: JSON.stringify(payload) });
+  return request<SessionUser | { pendingApproval: true }>("/api/auth/signup", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function login(payload: { email: string; password: string }) {
@@ -258,3 +264,29 @@ export function deleteComparison(id: string) {
     { method: "DELETE" }
   );
 }
+
+// [ADMIN-APPROVAL] Delete this block to retire the admin-approval feature.
+export interface PendingUserDto {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  createdAt: string;
+}
+
+export function getPendingUsers() {
+  return request<{ pending: PendingUserDto[] }>("/api/admin/users");
+}
+
+export function approveUser(id: string) {
+  return request<{ id: string; approved: true }>(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: "POST",
+  });
+}
+
+export function rejectUser(id: string) {
+  return request<{ id: string; rejected: true }>(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+// [ADMIN-APPROVAL] End of block.

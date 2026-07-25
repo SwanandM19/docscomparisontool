@@ -41,6 +41,7 @@ import {
   ApiClientError,
   type ComparisonDetailResponse,
 } from "@/lib/api-client";
+import { isProcurementMode, getModeLabel, hasFinancialData } from "@/lib/comparison/mode-labels";
 
 const SUMMARY_RECOMMENDATIONS = [
   "Recommended for Approval",
@@ -234,14 +235,25 @@ export default function ComparisonResults({
   }
 
   const hasGrn = comparison.mode === "3-way";
+  const procurementMode = isProcurementMode(comparison.mode);
+  const showFinancials = procurementMode || hasFinancialData(comparison.financials);
   const { financials, score, lineItemDiffs, fieldDiffs } = comparison;
 
   const vendorDiff = fieldDiffs.find((f) => f.fieldName === "Vendor Name");
   const vendorName =
     (vendorDiff?.docAValue as string) ||
     (vendorDiff?.docBValue as string) ||
-    "Unknown Vendor";
+    null;
   const primaryDoc = comparison.documents[0];
+  const documentLabel = procurementMode
+    ? vendorName ?? "Unknown Vendor"
+    : comparison.mode === "contract"
+      ? "Contract Comparison"
+      : "Document Comparison";
+  const documentSubLabel = primaryDoc?.extractedData?.vendorGSTIN
+    ? `GSTIN: ${primaryDoc.extractedData.vendorGSTIN}`
+    : comparison.documents.map((d) => d.fileName).join(" vs ") ||
+      `${comparison.documents.length} documents matched`;
   const createdDate = new Date(comparison.createdAt).toLocaleDateString(
     undefined,
     {
@@ -306,7 +318,7 @@ export default function ComparisonResults({
             variant="secondary"
             className="text-xs px-3 py-1 bg-brand/10 text-brand border-0"
           >
-            {hasGrn ? "3-Way Match" : "2-Way Match"}
+            {getModeLabel(comparison.mode)}
           </Badge>
         </div>
       </div>
@@ -323,15 +335,13 @@ export default function ComparisonResults({
                     <Building2 className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold">{vendorName}</h3>
+                    <h3 className="text-lg font-bold">{documentLabel}</h3>
                     <p className="text-xs text-muted-foreground">
-                      {primaryDoc?.extractedData?.vendorGSTIN
-                        ? `GSTIN: ${primaryDoc.extractedData.vendorGSTIN}`
-                        : `${comparison.documents.length} documents matched`}
+                      {documentSubLabel}
                     </p>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-2 text-xs border-t md:border-t-0 md:border-l border-border/60 pt-4 md:pt-0 md:pl-6">
+                <div className={cn("grid gap-x-8 gap-y-2 text-xs border-t md:border-t-0 md:border-l border-border/60 pt-4 md:pt-0 md:pl-6", showFinancials ? "grid-cols-2 md:grid-cols-3" : "grid-cols-1")}>
                   <div>
                     <span className="text-muted-foreground block mb-0.5">
                       Date Processed
@@ -341,34 +351,42 @@ export default function ComparisonResults({
                       {createdDate}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground block mb-0.5">
-                      Expected Total
-                    </span>
-                    <span className="font-semibold">
-                      ₹{financials.totalExpected.toFixed(2)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground block mb-0.5">
-                      Invoiced Total
-                    </span>
-                    <span className="font-semibold">
-                      ₹{financials.totalInvoiced.toFixed(2)}
-                    </span>
-                  </div>
+                  {showFinancials && (
+                    <>
+                      <div>
+                        <span className="text-muted-foreground block mb-0.5">
+                          Expected Total
+                        </span>
+                        <span className="font-semibold">
+                          ₹{financials.totalExpected.toFixed(2)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block mb-0.5">
+                          Invoiced Total
+                        </span>
+                        <span className="font-semibold">
+                          ₹{financials.totalInvoiced.toFixed(2)}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Interactive Structured Diff Table */}
+          {/* Interactive Structured Diff Table — hidden entirely for
+              non-procurement modes with no line items, rather than showing
+              an empty PO/Invoice-shaped table for a document type that was
+              never going to have line items in the first place. */}
+          {(procurementMode || lineItemDiffs.length > 0) && (
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="border-b border-border/50 py-4 px-6">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-base font-semibold">
-                    Structured Line-Item Diff
+                    {procurementMode ? "Structured Line-Item Diff" : "Structured Field Diff"}
                   </CardTitle>
                   <CardDescription className="text-xs">
                     Click a mismatched row to view detailed root-cause analysis
@@ -392,22 +410,22 @@ export default function ComparisonResults({
                         LN
                       </TableHead>
                       <TableHead className="w-[32%] text-xs font-semibold">
-                        Item Description
+                        {procurementMode ? "Item Description" : "Description"}
                       </TableHead>
                       <TableHead className="w-[16%] text-xs font-semibold text-center">
-                        {hasGrn ? "PO / GRN / INV Qty" : "PO vs INV Qty"}
+                        {procurementMode ? (hasGrn ? "PO / GRN / INV Qty" : "PO vs INV Qty") : "Doc A vs Doc B Qty"}
                       </TableHead>
                       <TableHead className="w-[13%] text-xs font-semibold text-right">
-                        PO Price
+                        {procurementMode ? "PO Price" : "Doc A Value"}
                       </TableHead>
                       <TableHead className="w-[13%] text-xs font-semibold text-right">
-                        INV Price
+                        {procurementMode ? "INV Price" : "Doc B Value"}
                       </TableHead>
                       <TableHead className="w-[13%] text-xs font-semibold text-right">
-                        PO Total
+                        {procurementMode ? "PO Total" : "Total (Doc A)"}
                       </TableHead>
                       <TableHead className="w-[13%] text-xs font-semibold text-right">
-                        INV Total
+                        {procurementMode ? "INV Total" : "Total (Doc B)"}
                       </TableHead>
                     </TableRow>
                   </TableHeader>
@@ -559,6 +577,7 @@ export default function ComparisonResults({
               </div>
             </CardContent>
           </Card>
+          )}
 
           {/* Field-level diffs (vendor, dates, totals, tax, etc.) */}
           {fieldDiffs.some((f) => !f.withinTolerance) && (
@@ -608,68 +627,74 @@ export default function ComparisonResults({
 
         {/* RIGHT COLUMN: Sticky AI & Financial Summary */}
         <div className="space-y-6 lg:sticky lg:top-20">
-          {/* Financial Impact Calculator Card */}
+          {/* Financial Impact Calculator Card — the financial breakdown only
+              renders when there's actually financial data; the score
+              metrics below it are always relevant regardless of mode. */}
           <Card className="border-border/80 shadow-sm overflow-hidden">
             <div className="h-1.5 bg-gradient-to-r from-brand to-violet-500" />
             <CardHeader className="py-4 px-6 border-b border-border/40">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Calculator className="w-4 h-4 text-brand" />
-                Financial Impact Calculator
+                {showFinancials ? "Financial Impact Calculator" : "Comparison Metrics"}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-secondary/40 p-3 rounded-lg border border-border/30">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider block font-semibold">
-                    Expected Total
-                  </span>
-                  <span className="text-lg font-bold tracking-tight text-foreground font-mono block mt-1">
-                    ₹{financials.totalExpected.toFixed(2)}
-                  </span>
-                </div>
-                <div className="bg-secondary/40 p-3 rounded-lg border border-border/30">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider block font-semibold">
-                    Total Invoiced
-                  </span>
-                  <span className="text-lg font-bold tracking-tight text-foreground font-mono block mt-1">
-                    ₹{financials.totalInvoiced.toFixed(2)}
-                  </span>
-                </div>
-              </div>
+              {showFinancials && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-secondary/40 p-3 rounded-lg border border-border/30">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider block font-semibold">
+                        Expected Total
+                      </span>
+                      <span className="text-lg font-bold tracking-tight text-foreground font-mono block mt-1">
+                        ₹{financials.totalExpected.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="bg-secondary/40 p-3 rounded-lg border border-border/30">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider block font-semibold">
+                        Total Invoiced
+                      </span>
+                      <span className="text-lg font-bold tracking-tight text-foreground font-mono block mt-1">
+                        ₹{financials.totalInvoiced.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
 
-              <div className="p-4 rounded-xl border border-border/60 bg-secondary/10 space-y-3.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Net Variance
-                  </span>
-                  <span
-                    className={cn(
-                      "text-base font-bold font-mono",
-                      financials.netVariance > 0
-                        ? "text-destructive"
-                        : financials.netVariance < 0
-                          ? "text-success"
-                          : "text-foreground",
-                    )}
-                  >
-                    {financials.netVariance > 0
-                      ? `+₹${financials.netVariance.toFixed(2)}`
-                      : financials.netVariance < 0
-                        ? `-₹${Math.abs(financials.netVariance).toFixed(2)}`
-                        : "₹0.00"}
-                  </span>
-                </div>
-                <div className="h-px bg-border/50" />
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-success" />
-                    Potential Savings Identified
-                  </span>
-                  <span className="text-base font-bold font-mono text-success">
-                    ₹{financials.potentialSavings.toFixed(2)}
-                  </span>
-                </div>
-              </div>
+                  <div className="p-4 rounded-xl border border-border/60 bg-secondary/10 space-y-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        Net Variance
+                      </span>
+                      <span
+                        className={cn(
+                          "text-base font-bold font-mono",
+                          financials.netVariance > 0
+                            ? "text-destructive"
+                            : financials.netVariance < 0
+                              ? "text-success"
+                              : "text-foreground",
+                        )}
+                      >
+                        {financials.netVariance > 0
+                          ? `+₹${financials.netVariance.toFixed(2)}`
+                          : financials.netVariance < 0
+                            ? `-₹${Math.abs(financials.netVariance).toFixed(2)}`
+                            : "₹0.00"}
+                      </span>
+                    </div>
+                    <div className="h-px bg-border/50" />
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-success" />
+                        Potential Savings Identified
+                      </span>
+                      <span className="text-base font-bold font-mono text-success">
+                        ₹{financials.potentialSavings.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="grid grid-cols-3 gap-2 text-center pt-1">
                 <div>
