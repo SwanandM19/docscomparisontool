@@ -7,6 +7,10 @@ import AppSidebar from "@/components/dashboard/app-sidebar";
 import TopNavbar from "@/components/dashboard/top-navbar";
 import DashboardOverview from "@/components/dashboard/dashboard-overview";
 import DocumentComparator from "@/components/dashboard/document-comparator";
+import IntelligentComparison from "@/components/dashboard/intelligent-comparison";
+import DocumentTranslation from "@/components/dashboard/document-translation";
+import InvoiceBuilder from "@/components/dashboard/invoice-builder";
+import AssistantWidget from "@/components/dashboard/assistant-widget";
 import ComparisonResults from "@/components/dashboard/comparison-results";
 import AIWorkspace from "@/components/dashboard/ai-workspace";
 import HistoryAudits from "@/components/dashboard/history-audits";
@@ -34,6 +38,27 @@ const pages: Record<string, PageConfig> = {
     breadcrumbs: [
       { label: "DocIntel", href: "/dashboard" },
       { label: "Document Comparator" },
+    ],
+  },
+  intelligent: {
+    id: "intelligent",
+    breadcrumbs: [
+      { label: "DocIntel", href: "/dashboard" },
+      { label: "Intelligent Comparison" },
+    ],
+  },
+  translate: {
+    id: "translate",
+    breadcrumbs: [
+      { label: "DocIntel", href: "/dashboard" },
+      { label: "Document Translation" },
+    ],
+  },
+  invoice: {
+    id: "invoice",
+    breadcrumbs: [
+      { label: "DocIntel", href: "/dashboard" },
+      { label: "Invoice Builder" },
     ],
   },
   history: {
@@ -146,6 +171,12 @@ export default function DashboardPage() {
             }}
           />
         );
+      case "intelligent":
+        return <IntelligentComparison />;
+      case "translate":
+        return <DocumentTranslation />;
+      case "invoice":
+        return <InvoiceBuilder />;
       case "history":
         return <HistoryAudits onViewComparison={handleViewComparison} />;
       case "analytics":
@@ -181,6 +212,9 @@ export default function DashboardPage() {
             </main>
           </div>
         </div>
+
+        {/* Global assistant — floating launcher + window, available on every view. */}
+        <AssistantWidget />
       </ProcessingRegistryProvider>
     </TooltipProvider>
   );

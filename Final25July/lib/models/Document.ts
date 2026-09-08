@@ -12,6 +12,7 @@ export interface DocumentDoc extends MongooseDocument {
   extractedData: ExtractedDocumentData | null;
   extractionConfidence: number | null;
   extractionError: string | null;
+  aiSummary: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -84,6 +85,7 @@ const DocumentSchema = new Schema<DocumentDoc>(
     extractedData: { type: ExtractedDataSchema, default: null },
     extractionConfidence: { type: Number, default: null },
     extractionError: { type: String, default: null },
+    aiSummary: { type: String, default: null },
   },
   { timestamps: true }
 );

@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Loader2,
   RefreshCcw,
+  FileText,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ import {
   generateSummary,
   generateRecommendation,
   exportComparisonPdf,
+  summarizeDocument,
   ApiClientError,
   type ComparisonDetailResponse,
 } from "@/lib/api-client";
@@ -122,6 +124,37 @@ export default function ComparisonResults({
   );
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // Per-document plain-language summaries. Keyed by document _id; generated
+  // lazily once the comparison loads.
+  const [docSummaries, setDocSummaries] = useState<
+    Record<string, { text: string | null; loading: boolean; error: string | null }>
+  >({});
+
+  const runDocSummary = useCallback((docId: string, refresh = false) => {
+    setDocSummaries((prev) => ({
+      ...prev,
+      [docId]: { text: prev[docId]?.text ?? null, loading: true, error: null },
+    }));
+    summarizeDocument(docId, refresh)
+      .then(({ aiSummary }) =>
+        setDocSummaries((prev) => ({
+          ...prev,
+          [docId]: { text: aiSummary, loading: false, error: null },
+        })),
+      )
+      .catch((err) =>
+        setDocSummaries((prev) => ({
+          ...prev,
+          [docId]: {
+            text: prev[docId]?.text ?? null,
+            loading: false,
+            error:
+              err instanceof ApiClientError ? err.message : "Could not generate summary.",
+          },
+        })),
+      );
+  }, []);
+
   const loadComparison = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -169,6 +202,22 @@ export default function ComparisonResults({
         .catch(() => void 0)
         .finally(() => setRecommendationLoading(false));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comparison?._id]);
+
+  // Seed / generate per-document summaries once the comparison is loaded.
+  useEffect(() => {
+    if (!comparison) return;
+    const seeded: typeof docSummaries = {};
+    for (const doc of comparison.documents) {
+      if (doc.aiSummary) {
+        seeded[doc._id] = { text: doc.aiSummary, loading: false, error: null };
+      } else {
+        seeded[doc._id] = { text: null, loading: true, error: null };
+        runDocSummary(doc._id);
+      }
+    }
+    setDocSummaries(seeded);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comparison?._id]);
 
@@ -373,6 +422,69 @@ export default function ComparisonResults({
                   )}
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Per-document plain-language summaries */}
+          <Card className="border-border/80 shadow-sm">
+            <CardHeader className="border-b border-border/50 py-4 px-6">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-brand" />
+                Document Summaries
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Plain-language overview of each uploaded document
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+              {comparison.documents.map((doc) => {
+                const s = docSummaries[doc._id];
+                return (
+                  <div
+                    key={doc._id}
+                    className="rounded-lg border border-border/50 bg-secondary/20 p-4"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] font-mono shrink-0"
+                        >
+                          {doc.kind}
+                        </Badge>
+                        <span className="text-xs font-medium truncate">
+                          {doc.fileName}
+                        </span>
+                      </div>
+                      {s && !s.loading && (
+                        <button
+                          onClick={() => runDocSummary(doc._id, true)}
+                          className="text-muted-foreground/60 hover:text-foreground transition-colors shrink-0"
+                          title="Regenerate summary"
+                        >
+                          <RefreshCcw className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {s?.loading ? (
+                      <p className="text-xs text-muted-foreground/70 flex items-center gap-2">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Generating summary…
+                      </p>
+                    ) : s?.error ? (
+                      <p className="text-xs text-destructive">{s.error}</p>
+                    ) : s?.text ? (
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {s.text}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground/70">
+                        No summary available.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
 

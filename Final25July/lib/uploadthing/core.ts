@@ -9,6 +9,23 @@ const uploadInputSchema = z.object({
 
 const f = createUploadthing();
 
+const GENERIC_FILE_TYPES = {
+  pdf: { maxFileSize: "16MB", maxFileCount: 1 },
+  image: { maxFileSize: "8MB", maxFileCount: 1 },
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+    maxFileSize: "16MB",
+    maxFileCount: 1,
+  },
+  "application/vnd.ms-excel": { maxFileSize: "16MB", maxFileCount: 1 },
+  "text/csv": { maxFileSize: "16MB", maxFileCount: 1 },
+  "text/plain": { maxFileSize: "16MB", maxFileCount: 1 },
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+    maxFileSize: "16MB",
+    maxFileCount: 1,
+  },
+  "application/msword": { maxFileSize: "16MB", maxFileCount: 1 },
+} as const;
+
 /**
  * Single shared uploader used for every document kind. The `kind` (PO / GRN /
  * Invoice / Contract) is supplied by the client as form input and validated
@@ -46,6 +63,29 @@ export const ourFileRouter = {
       // rather than inside third-party webhook callbacks.
       return {
         kind: metadata.kind,
+        fileUrl: file.ufsUrl ?? file.url,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || "application/octet-stream",
+      };
+    }),
+
+  /**
+   * Uploader for the Intelligent Comparison section: accepts documents of any
+   * type (CV, report, contract, invoice, …) with no procurement `kind`. The
+   * IntelligentComparison record is created by the client calling
+   * POST /api/intelligent-compare once every file has uploaded.
+   */
+  genericUploader: f(GENERIC_FILE_TYPES)
+    .middleware(async ({ req }) => {
+      const session = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
+      if (!session) {
+        throw new UploadThingError("You must be signed in to upload documents.");
+      }
+      return { uploadedBy: session.email };
+    })
+    .onUploadComplete(async ({ file }) => {
+      return {
         fileUrl: file.ufsUrl ?? file.url,
         fileName: file.name,
         fileSize: file.size,

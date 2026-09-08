@@ -10,6 +10,19 @@ import type {
   ToleranceRuleInput,
   ChatMessageRecord,
 } from "@/types/comparison";
+import type {
+  IntelligentSourceFile,
+  IntelligentDocumentSummary,
+  IntelligentComparisonResult,
+} from "@/types/intelligent";
+import type { AssistantMessage } from "@/types/assistant";
+import type {
+  TranslationDirection,
+  TranslationRecord,
+  TranslationResult,
+  TranslationSourceFile,
+} from "@/types/translation";
+import type { InvoiceData, InvoiceRecord, InvoiceStatus } from "@/types/invoice";
 
 export class ApiClientError extends Error {
   status: number;
@@ -104,6 +117,7 @@ export interface ComparisonDetailResponse extends CompareResponse {
     fileUrl: string;
     extractedData: ExtractedDocumentData | null;
     extractionConfidence: number | null;
+    aiSummary: string | null;
   }[];
   presetUsed: string;
   toleranceRules: ToleranceRuleInput[];
@@ -116,6 +130,14 @@ export interface ComparisonDetailResponse extends CompareResponse {
 
 export function getComparison(id: string) {
   return request<ComparisonDetailResponse>(`/api/comparison/${id}`);
+}
+
+// ── /api/document/:id/summary ──
+export function summarizeDocument(documentId: string, refresh = false) {
+  return request<{ documentId: string; aiSummary: string }>(
+    `/api/document/${encodeURIComponent(documentId)}/summary${refresh ? "?refresh=1" : ""}`,
+    { method: "POST" }
+  );
 }
 
 // ── /api/summary ──
@@ -158,6 +180,122 @@ export async function exportComparisonPdf(comparisonId: string): Promise<Blob> {
     );
   }
   return res.blob();
+}
+
+// ── /api/intelligent-compare ──
+export interface IntelligentComparisonResponse {
+  id: string;
+  files: IntelligentSourceFile[];
+  documentSummaries: IntelligentDocumentSummary[];
+  comparison: IntelligentComparisonResult;
+}
+
+export interface IntelligentComparisonDetail {
+  _id: string;
+  files: IntelligentSourceFile[];
+  documentSummaries: IntelligentDocumentSummary[];
+  comparison: IntelligentComparisonResult;
+  createdBy: string;
+  createdAt: string;
+}
+
+export function runIntelligentCompare(payload: {
+  files: { fileUrl: string; fileName: string; fileSize: number; mimeType: string }[];
+}) {
+  return request<IntelligentComparisonResponse>("/api/intelligent-compare", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getIntelligentComparison(id: string) {
+  return request<IntelligentComparisonDetail>(
+    `/api/intelligent-comparison/${encodeURIComponent(id)}`
+  );
+}
+
+// ── /api/translate ──
+export interface TranslateResponse {
+  id: string;
+  file: TranslationSourceFile;
+  direction: TranslationDirection;
+  result: TranslationResult;
+}
+
+export function translateDocumentFile(payload: {
+  direction: TranslationDirection;
+  file: { fileUrl: string; fileName: string; fileSize: number; mimeType: string };
+}) {
+  return request<TranslateResponse>("/api/translate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getTranslations(limit = 10) {
+  return request<{ translations: TranslationRecord[] }>(`/api/translate?limit=${limit}`);
+}
+
+// ── /api/invoices ──
+export function getInvoices(limit = 25) {
+  return request<{ invoices: InvoiceRecord[] }>(`/api/invoices?limit=${limit}`);
+}
+
+export function getInvoice(id: string) {
+  return request<InvoiceRecord>(`/api/invoices/${encodeURIComponent(id)}`);
+}
+
+export function createInvoice(payload: { data: InvoiceData; status: InvoiceStatus }) {
+  return request<InvoiceRecord>("/api/invoices", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateInvoice(id: string, payload: { data: InvoiceData; status: InvoiceStatus }) {
+  return request<InvoiceRecord>(`/api/invoices/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteInvoice(id: string) {
+  return request<{ id: string }>(`/api/invoices/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── /api/invoice-pdf ──
+export async function renderInvoicePdf(data: InvoiceData): Promise<Blob> {
+  const res = await fetch("/api/invoice-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiClientError(
+      body?.error?.message ?? "Could not generate the invoice PDF",
+      res.status,
+      body?.error?.code ?? "INVOICE_PDF_FAILED",
+      body?.error?.details
+    );
+  }
+  return res.blob();
+}
+
+// ── /api/assistant ──
+export function getAssistantConversation() {
+  return request<{ messages: AssistantMessage[]; updatedAt: string | null }>("/api/assistant");
+}
+
+export function sendAssistantMessage(message: string) {
+  return request<{ message: AssistantMessage; messages: AssistantMessage[] }>("/api/assistant", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+export function clearAssistantConversation() {
+  return request<{ cleared: true }>("/api/assistant", { method: "DELETE" });
 }
 
 // ── /api/history ──

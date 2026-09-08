@@ -60,4 +60,5 @@ export interface DocumentRecord {
   extractedData: ExtractedDocumentData | null;
   extractionConfidence: number | null;
   extractionError?: string | null;
+  aiSummary?: string | null;
 }

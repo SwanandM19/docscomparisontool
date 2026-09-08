@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   LayoutDashboard,
   GitCompareArrows,
+  Brain,
   History,
   BarChart3,
   ChevronLeft,
@@ -12,6 +13,8 @@ import {
   Sparkles,
   Layers,
   UserCheck,
+  Languages,
+  ReceiptText,
 } from "lucide-react";
 import {
   Tooltip,
@@ -49,6 +52,30 @@ const navItems: NavItem[] = [
     href: "/comparator",
     badge: "Flagship",
     badgeVariant: "accent",
+  },
+  {
+    id: "intelligent",
+    label: "Intelligent Comparison",
+    icon: Brain,
+    href: "/intelligent",
+    badge: "New",
+    badgeVariant: "success",
+  },
+  {
+    id: "translate",
+    label: "Document Translation",
+    icon: Languages,
+    href: "/translate",
+    badge: "New",
+    badgeVariant: "success",
+  },
+  {
+    id: "invoice",
+    label: "Invoice Builder",
+    icon: ReceiptText,
+    href: "/invoice",
+    badge: "New",
+    badgeVariant: "success",
   },
   {
     id: "history",

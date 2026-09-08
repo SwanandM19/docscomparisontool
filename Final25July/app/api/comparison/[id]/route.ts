@@ -40,6 +40,7 @@ export const GET = withErrorHandling(
         fileUrl: d.fileUrl,
         extractedData: d.extractedData,
         extractionConfidence: d.extractionConfidence,
+        aiSummary: d.aiSummary ?? null,
       })),
       presetUsed: comparison.presetUsed,
       toleranceRules: comparison.toleranceRules,

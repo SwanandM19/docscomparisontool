@@ -36,6 +36,74 @@ export const summaryRequestSchema = z.object({
   comparisonId: z.string().min(1),
 });
 
+export const intelligentCompareRequestSchema = z.object({
+  files: z
+    .array(
+      z.object({
+        fileUrl: z.string().url(),
+        fileName: z.string().min(1),
+        fileSize: z.number().positive(),
+        mimeType: z.string().min(1),
+      })
+    )
+    .min(2, "Provide at least 2 documents to compare")
+    .max(5, "You can compare up to 5 documents at once"),
+});
+
+export const translateRequestSchema = z.object({
+  direction: z.enum(["en-mr", "mr-en"]),
+  file: z.object({
+    fileUrl: z.string().url(),
+    fileName: z.string().min(1),
+    fileSize: z.number().positive(),
+    mimeType: z.string().min(1),
+  }),
+});
+
+export const invoicePartySchema = z.object({
+  name: z.string().trim().max(200).default(""),
+  address: z.string().trim().max(600).default(""),
+  gstin: z.string().trim().max(30).default(""),
+  email: z.string().trim().max(254).default(""),
+  phone: z.string().trim().max(40).default(""),
+});
+
+export const invoiceLineItemSchema = z.object({
+  id: z.string().min(1),
+  description: z.string().trim().max(500).default(""),
+  hsn: z.string().trim().max(20).default(""),
+  quantity: z.number().min(0).max(1_000_000),
+  unitPrice: z.number().min(0).max(1_000_000_000),
+  taxRate: z.number().min(0).max(100),
+});
+
+export const invoiceDataSchema = z.object({
+  invoiceNumber: z.string().trim().min(1, "Invoice number is required").max(60),
+  invoiceDate: z.string().trim().max(30).default(""),
+  dueDate: z.string().trim().max(30).default(""),
+  currency: z.string().trim().min(1).max(5).default("INR"),
+  taxMode: z.enum(["cgst_sgst", "igst", "none"]).default("cgst_sgst"),
+  seller: invoicePartySchema,
+  buyer: invoicePartySchema,
+  lineItems: z
+    .array(invoiceLineItemSchema)
+    .min(1, "Add at least one line item")
+    .max(100, "An invoice can hold up to 100 line items"),
+  discount: z.number().min(0).default(0),
+  shipping: z.number().min(0).default(0),
+  notes: z.string().trim().max(2000).default(""),
+  terms: z.string().trim().max(2000).default(""),
+});
+
+export const invoiceSaveSchema = z.object({
+  data: invoiceDataSchema,
+  status: z.enum(["draft", "final"]).default("draft"),
+});
+
+export const invoicePdfSchema = z.object({
+  data: invoiceDataSchema,
+});
+
 export const recommendationRequestSchema = z.object({
   comparisonId: z.string().min(1),
 });
@@ -43,6 +111,10 @@ export const recommendationRequestSchema = z.object({
 export const chatRequestSchema = z.object({
   comparisonId: z.string().min(1),
   message: z.string().min(1).max(2000),
+});
+
+export const assistantChatSchema = z.object({
+  message: z.string().trim().min(1, "Message is required").max(2000),
 });
 
 export const exportRequestSchema = z.object({
