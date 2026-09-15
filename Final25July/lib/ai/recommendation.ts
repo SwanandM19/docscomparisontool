@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateJson } from "@/lib/ai/gemini";
+import { generateJson, GEMINI_MODEL_LITE } from "@/lib/ai/gemini";
 import { ApiError } from "@/lib/api-utils/errors";
 import type { ComparisonDoc } from "@/lib/models/Comparison";
 import type { ComparisonMode } from "@/types/comparison";
@@ -91,6 +91,7 @@ Recommend Approve, Hold, or Reject with a one-to-two sentence reason.`;
       systemInstruction: buildSystemInstruction(comparison.mode),
       temperature: 0.2,
       timeoutMs: 25_000,
+      model: GEMINI_MODEL_LITE,
     });
     return recommendationSchema.parse(raw);
   } catch (err) {

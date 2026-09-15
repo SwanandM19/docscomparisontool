@@ -2,8 +2,8 @@
 
 import React, { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import {
-  Layers,
   Sparkles,
   Lock,
   Mail,
@@ -76,8 +76,8 @@ function LoginForm() {
       <div className="w-full max-w-[420px] animate-fade-in-up">
         {/* Brand Logo Header */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-sidebar flex items-center justify-center text-sidebar-primary border border-sidebar-border shadow-md mb-3">
-            <Layers className="w-6 h-6 text-brand" />
+          <div className="flex items-center justify-center mb-3">
+            <Image src="/Logo.png" alt="Company logo" width={140} height={145} className="object-contain" priority />
           </div>
           <h1 className="text-xl font-bold tracking-tight">DocIntel Platform</h1>
           <p className="text-xs text-muted-foreground mt-1">Enterprise-grade document intelligence</p>

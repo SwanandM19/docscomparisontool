@@ -24,6 +24,8 @@ const GENERIC_FILE_TYPES = {
     maxFileCount: 1,
   },
   "application/msword": { maxFileSize: "16MB", maxFileCount: 1 },
+  "application/rtf": { maxFileSize: "16MB", maxFileCount: 1 },
+  "text/rtf": { maxFileSize: "16MB", maxFileCount: 1 },
 } as const;
 
 /**
@@ -47,6 +49,8 @@ export const ourFileRouter = {
       maxFileCount: 1,
     },
     "application/msword": { maxFileSize: "16MB", maxFileCount: 1 },
+    "application/rtf": { maxFileSize: "16MB", maxFileCount: 1 },
+    "text/rtf": { maxFileSize: "16MB", maxFileCount: 1 },
   })
     .input(uploadInputSchema)
     .middleware(async ({ req, input }) => {

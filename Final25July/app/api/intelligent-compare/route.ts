@@ -59,7 +59,8 @@ export const POST = withErrorHandling(async (req: Request) => {
       comparison.verdict.rating === "Divergent" || comparison.verdict.rating === "Weak Match"
         ? "warning"
         : "completed",
-    details: `${comparison.documentsCompared} — ${comparison.verdict.rating}. ${comparison.alignedFindings.length} aligned finding(s).`,
+    details: `${comparison.documentsCompared}: ${comparison.verdict.rating}. ${comparison.alignedFindings.length} aligned finding(s).`,
+    relatedIntelligentComparisonId: record._id.toString(),
   });
 
   return apiSuccess(

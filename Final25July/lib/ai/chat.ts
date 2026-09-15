@@ -1,4 +1,4 @@
-import { generateText } from "@/lib/ai/gemini";
+import { generateText, GEMINI_MODEL_LITE } from "@/lib/ai/gemini";
 import type { ComparisonDoc } from "@/lib/models/Comparison";
 import type { ChatMessageRecord } from "@/types/comparison";
 
@@ -46,5 +46,6 @@ export async function generateChatReply(
     systemInstruction: SYSTEM_INSTRUCTION,
     temperature: 0.4,
     timeoutMs: 25_000,
+    model: GEMINI_MODEL_LITE,
   });
 }

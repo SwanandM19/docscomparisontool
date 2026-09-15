@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Sparkles,
   Upload,
@@ -14,6 +14,7 @@ import {
   ArrowLeftRight,
   ScrollText,
   RefreshCcw,
+  Network,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,14 +23,59 @@ import { cn } from "@/lib/utils";
 import { uploadFiles } from "@/lib/uploadthing/react";
 import {
   runIntelligentCompare,
+  getIntelligentComparison,
   ApiClientError,
   type IntelligentComparisonResponse,
 } from "@/lib/api-client";
 import type { AlignedStatus } from "@/types/intelligent";
 
-const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.csv,.docx,.doc,.txt";
+const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.csv,.docx,.doc,.rtf,.txt";
 const MIN_FILES = 2;
 const MAX_FILES = 5;
+
+type CompareMode = "1-1" | "1-many";
+
+interface CompareModeConfig {
+  id: CompareMode;
+  title: string;
+  description: string;
+  icon: React.ElementType;
+  iconColor: string;
+  iconBg: string;
+}
+
+/**
+ * Both modes run through the exact same upload + /api/intelligent-compare
+ * pipeline below — the only difference is how many documents are allowed
+ * and how the staged files are labelled. See `maxFilesFor`.
+ */
+const COMPARE_MODES: CompareModeConfig[] = [
+  {
+    id: "1-1",
+    title: "1:1 Comparison",
+    description: "Compare exactly one document against one other document — e.g. Document A ↔ Document B.",
+    icon: ArrowLeftRight,
+    iconColor: "text-brand",
+    iconBg: "bg-brand/10",
+  },
+  {
+    id: "1-many",
+    title: "1:Many Comparison",
+    description: "Compare one base document against several others at once — e.g. Document A ↔ B, C, D…",
+    icon: Network,
+    iconColor: "text-violet-500",
+    iconBg: "bg-violet-500/10",
+  },
+];
+
+function maxFilesFor(mode: CompareMode): number {
+  return mode === "1-1" ? 2 : MAX_FILES;
+}
+
+function stagedLabel(mode: CompareMode, index: number): string {
+  if (mode === "1-1") return index === 0 ? "Document A" : "Document B";
+  return index === 0 ? "Base Document" : `Comparison Document ${index}`;
+}
 
 interface StagedFile {
   id: string;
@@ -62,30 +108,71 @@ const VERDICT_STYLES: Record<string, string> = {
   Divergent: "bg-destructive/15 text-destructive border-destructive/30",
 };
 
-export default function IntelligentComparison() {
+interface IntelligentComparisonProps {
+  /** When set, loads and shows this past comparison instead of the upload flow. */
+  initialComparisonId?: string;
+}
+
+export default function IntelligentComparison({ initialComparisonId }: IntelligentComparisonProps) {
   const [staged, setStaged] = useState<StagedFile[]>([]);
   const [phase, setPhase] = useState<"upload" | "running" | "results">("upload");
   const [progressLabel, setProgressLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IntelligentComparisonResponse | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [compareMode, setCompareMode] = useState<CompareMode | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const maxFiles = compareMode ? maxFilesFor(compareMode) : MAX_FILES;
 
-  const addFiles = useCallback((incoming: FileList | File[]) => {
-    // Snapshot into a real array *now* — callers clear the <input> value right
-    // after, which empties a live FileList before this deferred updater runs.
-    const list = Array.from(incoming);
+  useEffect(() => {
+    if (!initialComparisonId) return;
+    let cancelled = false;
+    setPhase("running");
+    setProgressLabel("Loading saved comparison…");
     setError(null);
-    setStaged((prev) => {
-      const next = [...prev];
-      for (const file of list) {
-        if (next.length >= MAX_FILES) break;
-        if (next.some((s) => s.file.name === file.name && s.file.size === file.size)) continue;
-        next.push({ id: `${file.name}-${file.size}-${Date.now()}-${next.length}`, file });
-      }
-      return next;
-    });
-  }, []);
+
+    getIntelligentComparison(initialComparisonId)
+      .then((detail) => {
+        if (cancelled) return;
+        setResult({
+          id: detail._id,
+          files: detail.files,
+          documentSummaries: detail.documentSummaries,
+          comparison: detail.comparison,
+        });
+        setPhase("results");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiClientError ? err.message : "Could not load this comparison."
+        );
+        setPhase("upload");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialComparisonId]);
+
+  const addFiles = useCallback(
+    (incoming: FileList | File[]) => {
+      // Snapshot into a real array *now* — callers clear the <input> value right
+      // after, which empties a live FileList before this deferred updater runs.
+      const list = Array.from(incoming);
+      setError(null);
+      setStaged((prev) => {
+        const next = [...prev];
+        for (const file of list) {
+          if (next.length >= maxFiles) break;
+          if (next.some((s) => s.file.name === file.name && s.file.size === file.size)) continue;
+          next.push({ id: `${file.name}-${file.size}-${Date.now()}-${next.length}`, file });
+        }
+        return next;
+      });
+    },
+    [maxFiles]
+  );
 
   const removeFile = (id: string) => setStaged((prev) => prev.filter((s) => s.id !== id));
 
@@ -95,6 +182,11 @@ export default function IntelligentComparison() {
     setError(null);
     setProgressLabel("");
     setPhase("upload");
+  };
+
+  const changeMode = () => {
+    reset();
+    setCompareMode(null);
   };
 
   const handleRun = async () => {
@@ -189,7 +281,7 @@ export default function IntelligentComparison() {
           <CardContent className="p-6 space-y-3">
             <p className="text-sm leading-relaxed text-muted-foreground">{comparison.overview}</p>
             <div className="p-3 rounded-lg bg-secondary/30 border border-border/50">
-              <p className="text-xs font-semibold mb-1">Verdict — {comparison.verdict.rating}</p>
+              <p className="text-xs font-semibold mb-1">Verdict: {comparison.verdict.rating}</p>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {comparison.verdict.rationale}
               </p>
@@ -331,21 +423,81 @@ export default function IntelligentComparison() {
     );
   }
 
+  /* ─────────────── Mode selection ─────────────── */
+  if (compareMode === null) {
+    return (
+      <div className="stagger-children max-w-[900px] mx-auto">
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <h2 className="text-2xl font-bold tracking-tight">Intelligent Comparison</h2>
+            <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold">
+              <Sparkles className="w-3 h-3 mr-1" />
+              Any Documents
+            </Badge>
+          </div>
+          <p className="text-muted-foreground max-w-xl mx-auto text-sm">
+            Choose how you want to compare documents. Both modes use the same AI reading, summarizing,
+            and alignment engine — this just decides how many documents you&apos;ll upload.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {COMPARE_MODES.map((mode) => {
+            const Icon = mode.icon;
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setCompareMode(mode.id)}
+                className="flex flex-col items-start gap-3 rounded-xl border-2 border-border/60 hover:border-brand hover:bg-brand/[0.03] p-6 text-left transition-all duration-200 cursor-pointer"
+              >
+                <div className={cn("w-11 h-11 rounded-xl flex items-center justify-center", mode.iconBg)}>
+                  <Icon className={cn("w-5 h-5", mode.iconColor)} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{mode.title}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-1">{mode.description}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   /* ─────────────── Upload state ─────────────── */
   return (
     <div className="stagger-children max-w-[900px] mx-auto">
       <div className="text-center mb-8">
+        <button
+          onClick={changeMode}
+          className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer group mx-auto mb-4"
+        >
+          <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+          Change comparison mode
+        </button>
         <div className="flex items-center justify-center gap-2 mb-2">
           <h2 className="text-2xl font-bold tracking-tight">Intelligent Comparison</h2>
           <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold">
             <Sparkles className="w-3 h-3 mr-1" />
-            Any Documents
+            {compareMode === "1-1" ? "1:1" : "1:Many"}
           </Badge>
         </div>
         <p className="text-muted-foreground max-w-xl mx-auto text-sm">
-          Upload any {MIN_FILES}–{MAX_FILES} documents of any type — a résumé and a job description,
-          two contract revisions, a PO and an invoice, two reports. The AI reads each one, summarizes
-          it, and compares them in context.
+          {compareMode === "1-1"
+            ? "Upload exactly 2 documents of any type, a résumé and a job description, two contract revisions, a PO and an invoice, two reports. The AI reads each one, summarizes it, and compares them in context."
+            : `Upload a base document plus up to ${MAX_FILES - 1} others to compare against it. The AI reads each one, summarizes it, and aligns them all in context.`}
+        </p>
+      </div>
+
+      {/* Handwritten/readability note */}
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 mb-4">
+        <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <span className="font-semibold text-foreground">Note:</span> If a document is
+          handwritten and not sufficiently readable, the accuracy of the generated results may
+          be affected.
         </p>
       </div>
 
@@ -382,27 +534,30 @@ export default function IntelligentComparison() {
           />
           <button
             onClick={() => inputRef.current?.click()}
-            disabled={staged.length >= MAX_FILES}
+            disabled={staged.length >= maxFiles}
             className="w-full flex flex-col items-center justify-center gap-2 py-8 rounded-xl hover:bg-secondary/40 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Upload className="w-7 h-7 text-muted-foreground/50" />
             <span className="text-sm font-medium text-muted-foreground">
-              {staged.length >= MAX_FILES ? `Maximum ${MAX_FILES} documents` : "Add documents"}
+              {staged.length >= maxFiles ? `Maximum ${maxFiles} documents` : "Add documents"}
             </span>
             <span className="text-[11px] text-muted-foreground/60">
-              PDF, image, Word, Excel/CSV, or text · drag & drop or click
+              PDF, image, Word, RTF, Excel/CSV, or text · drag & drop or click
             </span>
           </button>
 
           {staged.length > 0 && (
             <div className="mt-4 space-y-2">
-              {staged.map((s) => (
+              {staged.map((s, i) => (
                 <div
                   key={s.id}
                   className="flex items-center gap-3 rounded-lg border border-border/50 bg-secondary/20 px-3 py-2"
                 >
                   <FileText className="w-4 h-4 text-brand shrink-0" />
                   <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-brand/80">
+                      {stagedLabel(compareMode, i)}
+                    </p>
                     <p className="text-xs font-medium truncate">{s.file.name}</p>
                     <p className="text-[10px] text-muted-foreground">{formatSize(s.file.size)}</p>
                   </div>

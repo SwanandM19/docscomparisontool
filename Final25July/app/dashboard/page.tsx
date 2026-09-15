@@ -2,19 +2,18 @@
 
 import React, { useState, useCallback } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ProcessingRegistryProvider } from "@/lib/hooks/processing-registry";
+import { HandwrittenGateProvider } from "@/lib/hooks/use-handwritten-gate";
 import AppSidebar from "@/components/dashboard/app-sidebar";
 import TopNavbar from "@/components/dashboard/top-navbar";
-import DashboardOverview from "@/components/dashboard/dashboard-overview";
 import DocumentComparator from "@/components/dashboard/document-comparator";
 import IntelligentComparison from "@/components/dashboard/intelligent-comparison";
 import DocumentTranslation from "@/components/dashboard/document-translation";
 import InvoiceBuilder from "@/components/dashboard/invoice-builder";
+import DocumentSummary from "@/components/dashboard/document-summary";
 import AssistantWidget from "@/components/dashboard/assistant-widget";
 import ComparisonResults from "@/components/dashboard/comparison-results";
 import AIWorkspace from "@/components/dashboard/ai-workspace";
 import HistoryAudits from "@/components/dashboard/history-audits";
-import VendorAnalytics from "@/components/dashboard/vendor-analytics";
 import ToleranceSettings from "@/components/dashboard/tolerance-settings";
 import UserProfile from "@/components/dashboard/user-profile";
 // [ADMIN-APPROVAL] Remove this import + its "approvals" entries below to retire the feature.
@@ -30,7 +29,7 @@ const pages: Record<string, PageConfig> = {
     id: "dashboard",
     breadcrumbs: [
       { label: "DocIntel", href: "/dashboard" },
-      { label: "Dashboard Overview" },
+      { label: "Overview" },
     ],
   },
   comparator: {
@@ -58,21 +57,14 @@ const pages: Record<string, PageConfig> = {
     id: "invoice",
     breadcrumbs: [
       { label: "DocIntel", href: "/dashboard" },
-      { label: "Invoice Builder" },
+      { label: "Document Filler" },
     ],
   },
-  history: {
-    id: "history",
+  summary: {
+    id: "summary",
     breadcrumbs: [
       { label: "DocIntel", href: "/dashboard" },
-      { label: "History & Audits" },
-    ],
-  },
-  analytics: {
-    id: "analytics",
-    breadcrumbs: [
-      { label: "DocIntel", href: "/dashboard" },
-      { label: "Vendor Analytics" },
+      { label: "Document Summary" },
     ],
   },
   settings: {
@@ -111,16 +103,24 @@ export default function DashboardPage() {
   const [comparatorFlow, setComparatorFlow] = useState<ComparatorFlow>("upload");
   const [activeComparisonId, setActiveComparisonId] = useState<string | null>(null);
 
+  // Same idea as activeComparisonId, for jumping straight into a past
+  // Intelligent Comparison or Translation from the Audit Log.
+  const [activeIntelligentId, setActiveIntelligentId] = useState<string | null>(null);
+  const [activeTranslationId, setActiveTranslationId] = useState<string | null>(null);
+
   const handleNavigate = useCallback(
     (id: string) => {
       if (id !== activePage && pages[id]) {
         setActivePage(id);
         setPageKey((k) => k + 1);
-        // Every fresh navigation into the comparator starts a new upload flow.
+        // Every fresh navigation into these sections starts a new flow
+        // rather than reopening whatever was last viewed from history.
         if (id === "comparator") {
           setComparatorFlow("upload");
           setActiveComparisonId(null);
         }
+        if (id === "intelligent") setActiveIntelligentId(null);
+        if (id === "translate") setActiveTranslationId(null);
       }
     },
     [activePage]
@@ -136,12 +136,30 @@ export default function DashboardPage() {
     setActiveComparisonId(comparisonId);
   }, []);
 
+  const handleViewIntelligentComparison = useCallback((id: string) => {
+    setActivePage("intelligent");
+    setPageKey((k) => k + 1);
+    setActiveIntelligentId(id);
+  }, []);
+
+  const handleViewTranslation = useCallback((id: string) => {
+    setActivePage("translate");
+    setPageKey((k) => k + 1);
+    setActiveTranslationId(id);
+  }, []);
+
   const currentPage = pages[activePage] || pages.dashboard;
 
   const renderContent = () => {
     switch (activePage) {
       case "dashboard":
-        return <DashboardOverview onNavigate={handleNavigate} onViewComparison={handleViewComparison} />;
+        return (
+          <HistoryAudits
+            onViewComparison={handleViewComparison}
+            onViewIntelligentComparison={handleViewIntelligentComparison}
+            onViewTranslation={handleViewTranslation}
+          />
+        );
       case "comparator":
         if (comparatorFlow === "workspace" && activeComparisonId) {
           return (
@@ -172,15 +190,13 @@ export default function DashboardPage() {
           />
         );
       case "intelligent":
-        return <IntelligentComparison />;
+        return <IntelligentComparison initialComparisonId={activeIntelligentId ?? undefined} />;
       case "translate":
-        return <DocumentTranslation />;
+        return <DocumentTranslation initialTranslationId={activeTranslationId ?? undefined} />;
       case "invoice":
         return <InvoiceBuilder />;
-      case "history":
-        return <HistoryAudits onViewComparison={handleViewComparison} />;
-      case "analytics":
-        return <VendorAnalytics />;
+      case "summary":
+        return <DocumentSummary />;
       case "settings":
         return <ToleranceSettings />;
       case "profile":
@@ -189,13 +205,19 @@ export default function DashboardPage() {
       case "approvals":
         return <UserApprovals />;
       default:
-        return <DashboardOverview onNavigate={handleNavigate} onViewComparison={handleViewComparison} />;
+        return (
+          <HistoryAudits
+            onViewComparison={handleViewComparison}
+            onViewIntelligentComparison={handleViewIntelligentComparison}
+            onViewTranslation={handleViewTranslation}
+          />
+        );
     }
   };
 
   return (
     <TooltipProvider delay={0}>
-      <ProcessingRegistryProvider>
+      <HandwrittenGateProvider>
         <div className="flex h-screen overflow-hidden bg-slate-50/50 dark:bg-slate-950/50">
           <AppSidebar activeItem={activePage} onNavigate={handleNavigate} />
 
@@ -213,9 +235,10 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Global assistant — floating launcher + window, available on every view. */}
-        <AssistantWidget />
-      </ProcessingRegistryProvider>
+        {/* Global assistant — floating launcher + window, available on every view.
+            `section` lets it tailor answers to whatever screen the user is on. */}
+        <AssistantWidget section={activePage} />
+      </HandwrittenGateProvider>
     </TooltipProvider>
   );
 }

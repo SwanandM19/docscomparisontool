@@ -15,7 +15,7 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DocIntel — Document Intelligence Platform",
+  title: "DocIntel Document Intelligence Platform",
   description:
     "Enterprise-grade document comparison and intelligence platform. AI-powered field-level analysis with configurable tolerances for vendor invoices, purchase orders, and contracts.",
 };

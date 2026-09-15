@@ -1,4 +1,4 @@
-import { generateText } from "@/lib/ai/gemini";
+import { generateText, GEMINI_MODEL_LITE } from "@/lib/ai/gemini";
 import type { DocumentDoc } from "@/lib/models/Document";
 import type { ExtractedDocumentData } from "@/types/document";
 
@@ -57,5 +57,6 @@ export async function generateDocumentSummary(doc: DocumentDoc): Promise<string>
     systemInstruction: SYSTEM_INSTRUCTION,
     temperature: 0.3,
     timeoutMs: 25_000,
+    model: GEMINI_MODEL_LITE,
   });
 }

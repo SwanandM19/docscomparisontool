@@ -12,7 +12,35 @@ export interface PromptFile {
   fileUrl: string;
   fileName: string;
   mimeType: string;
-  fileType: "pdf" | "image" | "word" | "excel" | "text";
+  fileType: "pdf" | "image" | "word" | "excel" | "text" | "rtf";
+}
+
+/**
+ * Strips RTF control words / groups and unescapes `\uN` Unicode escapes so a
+ * `.rtf` file (which may hold Marathi / Devanagari) becomes plain readable
+ * text for the model.
+ */
+export function rtfToPlainText(rtf: string): string {
+  let text = rtf;
+  // Drop binary data groups and common header tables outright.
+  text = text.replace(/\{\\\*[^{}]*\}/g, "");
+  text = text.replace(/\{\\(?:fonttbl|colortbl|stylesheet|info|pict)[^{}]*\}/gi, "");
+  // \uN<fallback> — RTF stores each UTF-16 code unit as a signed number.
+  text = text.replace(/\\u(-?\d+)\??/g, (_m, num) => {
+    let code = parseInt(num, 10);
+    if (code < 0) code += 65536;
+    return String.fromCharCode(code);
+  });
+  // \'hh — hex-escaped byte.
+  text = text.replace(/\\'([0-9a-fA-F]{2})/g, (_m, hex) =>
+    String.fromCharCode(parseInt(hex, 16))
+  );
+  // Paragraph / line breaks.
+  text = text.replace(/\\par[d]?\b/g, "\n").replace(/\\line\b/g, "\n").replace(/\\tab\b/g, "\t");
+  // Any remaining control words and stray braces.
+  text = text.replace(/\\[a-zA-Z]+-?\d* ?/g, "").replace(/[{}]/g, "");
+  text = text.replace(/\\\r?\n/g, "\n");
+  return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Ceiling on locally-extracted text passed to the model, in characters. */
@@ -52,6 +80,8 @@ export async function extractFileText(file: PromptFile): Promise<string> {
   let text: string;
   if (file.fileType === "word") {
     text = (await mammoth.extractRawText({ buffer })).value;
+  } else if (file.fileType === "rtf") {
+    text = rtfToPlainText(buffer.toString("utf-8"));
   } else {
     // csv / xls(x) exported as text / plain text — best effort.
     text = buffer.toString("utf-8");

@@ -20,16 +20,68 @@ import {
 } from "@/lib/api-client";
 import type { AssistantMessage } from "@/types/assistant";
 
-const SUGGESTIONS = [
+/** Prompt chips shown per screen — keys match the sidebar nav ids. */
+const SECTION_SUGGESTIONS: Record<string, string[]> = {
+  dashboard: [
+    "How do I filter the audit log?",
+    "What counts as a 'warning' row?",
+    "Which tool should I use to compare a PO and an invoice?",
+  ],
+  comparator: [
+    "What does the match score actually measure?",
+    "How do 2-way and 3-way matching differ?",
+    "A line item is flagged, how do I read the variance?",
+  ],
+  intelligent: [
+    "How is this different from the Document Comparator?",
+    "What do the verdict ratings mean?",
+    "How many documents can I compare at once?",
+  ],
+  translate: [
+    "What does the translator keep untranslated?",
+    "What does the confidence score mean?",
+    "How do I download the translation as .rtf?",
+  ],
+  invoice: [
+    "How do I get my uploaded form filled?",
+    "How can I tell which fields are blank?",
+    "Can I download the filled document as a PDF?",
+  ],
+  summary: [
+    "What kind of documents can I summarize here?",
+    "What details does the summary pull out of an invoice?",
+    "Can I summarize more than one document at once?",
+  ],
+  settings: [
+    "What's the difference between percentage and absolute tolerance?",
+    "What do the rule categories mean?",
+  ],
+  profile: ["How do I change my password?"],
+  approvals: ["How do I approve a pending user?"],
+};
+
+const DEFAULT_SUGGESTIONS = [
   "How does Intelligent Comparison differ from the Document Comparator?",
   "Summarize my most recent comparison",
   "What do tolerance rules do?",
 ];
 
+const SECTION_NAMES: Record<string, string> = {
+  dashboard: "Overview",
+  comparator: "Document Comparator",
+  intelligent: "Intelligent Comparison",
+  translate: "Document Translation",
+  invoice: "Document Filler",
+  summary: "Document Summary",
+  settings: "Tolerance Rules",
+  profile: "User Profile",
+  approvals: "User Approvals",
+};
+
 const WELCOME: AssistantMessage = {
   id: "welcome",
   sender: "ai",
-  text: "Hi! I'm the DocIntel Assistant. Ask me how any part of the platform works, or about your own recent comparisons and activity.",
+  text: "Hi! I'm the DocIntel Assistant. I follow you around the app, ask me anything about the screen you're on, how any feature works, or about your own recent activity.",
   timestamp: "",
 };
 
@@ -42,8 +94,11 @@ function formatTime(iso: string): string {
     : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export default function AssistantWidget() {
+export default function AssistantWidget({ section }: { section?: string }) {
   const [mounted, setMounted] = useState(false);
+  const suggestions =
+    (section && SECTION_SUGGESTIONS[section]) || DEFAULT_SUGGESTIONS;
+  const sectionName = section ? SECTION_NAMES[section] : undefined;
   const [open, setOpen] = useState(false);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [messages, setMessages] = useState<AssistantMessage[]>([WELCOME]);
@@ -106,7 +161,7 @@ export default function AssistantWidget() {
     setIsTyping(true);
 
     try {
-      const { message } = await sendAssistantMessage(trimmed);
+      const { message } = await sendAssistantMessage(trimmed, section);
       setMessages((prev) => [...prev, message]);
     } catch (err) {
       setMessages((prev) => [
@@ -147,7 +202,7 @@ export default function AssistantWidget() {
       {/* Floating window */}
       <div
         className={cn(
-          "fixed z-50 bottom-20 right-4 sm:right-6 w-[min(calc(100vw-2rem),380px)] h-[min(calc(100vh-8rem),560px)]",
+          "fixed z-50 bottom-20 right-4 sm:right-6 w-[min(calc(100vw-2rem),420px)] h-[min(calc(100vh-7rem),620px)]",
           "flex flex-col rounded-2xl border border-border/80 bg-card shadow-2xl overflow-hidden",
           "transition-all duration-200 origin-bottom-right",
           open ? "opacity-100 scale-100 pointer-events-auto" : "opacity-0 scale-95 pointer-events-none",
@@ -161,9 +216,9 @@ export default function AssistantWidget() {
               <Bot className="w-4 h-4 text-brand" />
             </div>
             <div>
-              <p className="text-xs font-semibold leading-tight">DocIntel Assistant</p>
-              <p className="text-[10px] text-muted-foreground leading-tight">
-                Grounded on your own activity
+              <p className="text-sm font-semibold leading-tight">DocIntel Assistant</p>
+              <p className="text-[11px] text-muted-foreground leading-tight">
+                {sectionName ? `Helping with · ${sectionName}` : "Grounded on your own activity"}
               </p>
             </div>
           </div>
@@ -225,7 +280,7 @@ export default function AssistantWidget() {
                     <div className="space-y-0.5 max-w-[82%]">
                       <div
                         className={cn(
-                          "px-3 py-2 rounded-xl text-[11px] leading-relaxed whitespace-pre-line border",
+                          "px-3 py-2 rounded-xl text-[13px] leading-relaxed whitespace-pre-line border",
                           isAI
                             ? "bg-secondary/40 text-foreground border-border/50 rounded-tl-none"
                             : "bg-brand text-brand-foreground border-brand rounded-tr-none",
@@ -260,11 +315,16 @@ export default function AssistantWidget() {
 
               {!hasRealMessages && !isTyping && (
                 <div className="pt-1 flex flex-col gap-1.5">
-                  {SUGGESTIONS.map((chip, i) => (
+                  {sectionName && (
+                    <p className="px-1 pb-0.5 text-[11px] font-medium text-muted-foreground/70">
+                      Questions about {sectionName}:
+                    </p>
+                  )}
+                  {suggestions.map((chip, i) => (
                     <button
                       key={i}
                       onClick={() => handleSend(chip)}
-                      className="text-left px-2.5 py-1.5 rounded-lg border border-border/70 bg-card hover:bg-secondary text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                      className="text-left px-2.5 py-1.5 rounded-lg border border-border/70 bg-card hover:bg-secondary text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
                     >
                       <Sparkles className="w-3 h-3 text-brand/75 shrink-0" />
                       {chip}
@@ -289,9 +349,9 @@ export default function AssistantWidget() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about DocIntel…"
+              placeholder={sectionName ? `Ask about ${sectionName}…` : "Ask about DocIntel…"}
               rows={1}
-              className="w-full max-h-24 bg-transparent text-[11px] resize-none placeholder:text-muted-foreground/60 focus:outline-none pr-8 py-1"
+              className="w-full max-h-24 bg-transparent text-[13px] resize-none placeholder:text-muted-foreground/60 focus:outline-none pr-8 py-1"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

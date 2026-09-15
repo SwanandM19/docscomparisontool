@@ -1,6 +1,7 @@
 import mammoth from "mammoth";
 import { z } from "zod";
 import { generateJson, fileUrlToInlinePart } from "@/lib/ai/gemini";
+import { rtfToPlainText } from "@/lib/ai/file-parts";
 import { ApiError } from "@/lib/api-utils/errors";
 import type { DocumentFileType, DocumentKind, ExtractedDocumentData } from "@/types/document";
 
@@ -106,6 +107,19 @@ async function extractWordDocumentText(fileUrl: string): Promise<string> {
 }
 
 /**
+ * RTF binaries aren't readable by Gemini's inline-data path either — fetched
+ * and converted to plain text locally, same as Word documents above.
+ */
+async function extractRtfDocumentText(fileUrl: string): Promise<string> {
+  const res = await fetch(fileUrl);
+  if (!res.ok) {
+    throw ApiError.upstream(`Failed to fetch file for extraction: ${res.status} ${res.statusText}`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return rtfToPlainText(buffer.toString("utf-8"));
+}
+
+/**
  * Runs AI extraction on a stored document's file, validates the response,
  * and returns a normalized ExtractedDocumentData object ready to persist.
  */
@@ -121,7 +135,9 @@ export async function extractDocumentData(params: {
   const documentPart =
     fileType === "word"
       ? `Document text (extracted from a Word file):\n\n${await extractWordDocumentText(fileUrl)}`
-      : await fileUrlToInlinePart(fileUrl, mimeTypeForFileType(fileType, mimeType));
+      : fileType === "rtf"
+        ? `Document text (extracted from an RTF file):\n\n${await extractRtfDocumentText(fileUrl)}`
+        : await fileUrlToInlinePart(fileUrl, mimeTypeForFileType(fileType, mimeType));
 
   let parsed;
   try {

@@ -1,4 +1,11 @@
 import { z } from "zod";
+import { isTranslationDirection, type TranslationDirection } from "@/types/translation";
+
+/** Any "source-target" pair from the supported language set, source !== target. */
+const translationDirectionSchema = z
+  .string()
+  .refine(isTranslationDirection, { message: "Unsupported or invalid translation direction." })
+  .transform((v) => v as TranslationDirection);
 
 export const documentKindSchema = z.enum(["PO", "GRN", "Invoice", "Contract"]);
 
@@ -50,14 +57,98 @@ export const intelligentCompareRequestSchema = z.object({
     .max(5, "You can compare up to 5 documents at once"),
 });
 
+const uploadedFileSchema = z.object({
+  fileUrl: z.string().url(),
+  fileName: z.string().min(1),
+  fileSize: z.number().positive(),
+  mimeType: z.string().min(1),
+});
+
+export const summarizeRequestSchema = z.object({
+  files: z
+    .array(uploadedFileSchema)
+    .min(1, "Upload at least one document to summarize")
+    .max(5, "You can summarize up to 5 documents at once"),
+});
+
+const summaryLabelledValueSchema = z.object({
+  label: z.string().max(200).default(""),
+  value: z.string().max(4000).default(""),
+});
+
+const documentSummarySchema = z.object({
+  fileName: z.string().max(260).default("Document"),
+  documentType: z.string().max(120).default("Document"),
+  title: z.string().max(300).default("Document"),
+  overview: z.string().max(8000).default(""),
+  parties: z
+    .array(
+      z.object({
+        role: z.string().max(120).default(""),
+        name: z.string().max(300).default(""),
+        details: z.string().max(2000).default(""),
+      })
+    )
+    .max(20)
+    .default([]),
+  keyFields: z.array(summaryLabelledValueSchema).max(80).default([]),
+  dates: z.array(summaryLabelledValueSchema).max(40).default([]),
+  financials: z.array(summaryLabelledValueSchema).max(60).default([]),
+  lineItems: z
+    .array(
+      z.object({
+        description: z.string().max(600).default(""),
+        quantity: z.string().max(60).default(""),
+        unitPrice: z.string().max(60).default(""),
+        amount: z.string().max(60).default(""),
+      })
+    )
+    .max(200)
+    .default([]),
+  highlights: z.array(z.string().max(1000)).max(40).default([]),
+});
+
+export const summaryPdfSchema = z.object({
+  documents: z.array(documentSummarySchema).min(1).max(5),
+});
+
+export const documentFieldsRequestSchema = z.object({
+  file: uploadedFileSchema,
+});
+
+const fieldValueInputSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().max(300).default(""),
+  value: z.string().max(2000).default(""),
+});
+
+export const invoiceFillRequestSchema = z.object({
+  file: uploadedFileSchema,
+  fields: z.array(fieldValueInputSchema).max(500).default([]),
+  notes: z.string().trim().max(2000).default(""),
+});
+
+export const documentFillPdfSchema = z.object({
+  documentType: z.string().trim().min(1).max(200).default("Document"),
+  content: z.string().min(1).max(200_000),
+});
+
 export const translateRequestSchema = z.object({
-  direction: z.enum(["en-mr", "mr-en"]),
+  direction: translationDirectionSchema,
   file: z.object({
     fileUrl: z.string().url(),
     fileName: z.string().min(1),
     fileSize: z.number().positive(),
     mimeType: z.string().min(1),
   }),
+});
+
+export const translationPdfSchema = z.object({
+  fileName: z.string().trim().min(1).max(260),
+  direction: translationDirectionSchema,
+  sourceText: z.string().max(200_000).default(""),
+  translatedText: z.string().min(1).max(200_000),
+  confidence: z.number().min(0).max(1).default(0),
 });
 
 export const invoicePartySchema = z.object({
@@ -115,6 +206,9 @@ export const chatRequestSchema = z.object({
 
 export const assistantChatSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(2000),
+  /** Which dashboard screen the user is currently on, so the assistant can
+   *  tailor its answer to that section. Free-form id from the sidebar. */
+  section: z.string().trim().max(40).optional(),
 });
 
 export const exportRequestSchema = z.object({

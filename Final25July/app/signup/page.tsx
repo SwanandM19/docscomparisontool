@@ -2,8 +2,8 @@
 
 import React, { useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import {
-  Layers,
   Sparkles,
   Lock,
   Mail,
@@ -106,10 +106,10 @@ export default function SignupPage() {
               <div className="w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center">
                 <Clock className="w-6 h-6 text-warning" />
               </div>
-              <h2 className="text-base font-semibold">Account created — pending approval</h2>
+              <h2 className="text-base font-semibold">Account created, pending approval</h2>
               <p className="text-sm text-muted-foreground max-w-sm">
                 Your account has been created but needs to be approved by an administrator before
-                you can sign in. You'll be able to log in once that happens.
+                you can sign in. You&apos;ll be able to log in once that happens.
               </p>
               <a href="/login" className="text-xs font-semibold text-brand hover:underline mt-2">
                 Back to sign in
@@ -127,8 +127,8 @@ export default function SignupPage() {
 
       <div className="w-full max-w-[420px] animate-fade-in-up">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-sidebar flex items-center justify-center text-sidebar-primary border border-sidebar-border shadow-md mb-3">
-            <Layers className="w-6 h-6 text-brand" />
+          <div className="flex items-center justify-center mb-3">
+            <Image src="/Logo.png" alt="Company logo" width={140} height={145} className="object-contain" priority />
           </div>
           <h1 className="text-xl font-bold tracking-tight">DocIntel Platform</h1>
           <p className="text-xs text-muted-foreground mt-1">Enterprise-grade document intelligence</p>

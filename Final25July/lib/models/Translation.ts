@@ -1,4 +1,5 @@
 import { Schema, model, models, type Model, type Document as MongooseDocument } from "mongoose";
+import { LANGUAGE_CODES } from "@/types/translation";
 import type {
   TranslationDirection,
   TranslationResult,
@@ -22,16 +23,21 @@ const SourceFileSchema = new Schema(
     mimeType: { type: String, required: true },
     fileType: {
       type: String,
-      enum: ["pdf", "image", "word", "excel", "text"],
+      enum: ["pdf", "image", "word", "excel", "text", "rtf"],
       required: true,
     },
   },
   { _id: false }
 );
 
+/** Every ordered "source-target" pair across the supported language set. */
+const ALL_DIRECTIONS = LANGUAGE_CODES.flatMap((source) =>
+  LANGUAGE_CODES.filter((target) => target !== source).map((target) => `${source}-${target}`)
+);
+
 const ResultSchema = new Schema(
   {
-    detectedLanguage: { type: String, enum: ["en", "mr", "other"], required: true },
+    detectedLanguage: { type: String, enum: [...LANGUAGE_CODES, "other"], required: true },
     directionMismatch: { type: Boolean, default: false },
     sourceText: { type: String, default: "" },
     translatedText: { type: String, required: true },
@@ -44,7 +50,7 @@ const ResultSchema = new Schema(
 const TranslationSchema = new Schema<TranslationDoc>(
   {
     file: { type: SourceFileSchema, required: true },
-    direction: { type: String, enum: ["en-mr", "mr-en"], required: true, index: true },
+    direction: { type: String, enum: ALL_DIRECTIONS, required: true, index: true },
     result: { type: ResultSchema, required: true },
     createdBy: { type: String, default: "admin@company.com", index: true },
   },

@@ -8,7 +8,7 @@ import { translateDocument } from "@/lib/ai/translation";
 import { resolveFileType } from "@/lib/utils/file-type";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import {
-  DIRECTION_LABELS,
+  directionLabel,
   type TranslationFileType,
   type TranslationSourceFile,
 } from "@/types/translation";
@@ -17,7 +17,10 @@ const MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024;
 
 /** Maps the procurement file-type helper onto the translation section's set. */
 function toTranslationFileType(mimeType: string, fileName: string): TranslationFileType {
-  if (mimeType === "text/plain" || fileName.toLowerCase().endsWith(".txt")) return "text";
+  const lower = fileName.toLowerCase();
+  if (mimeType === "application/rtf" || mimeType === "text/rtf" || lower.endsWith(".rtf"))
+    return "rtf";
+  if (mimeType === "text/plain" || lower.endsWith(".txt")) return "text";
   return resolveFileType(mimeType, fileName) as TranslationFileType;
 }
 
@@ -50,28 +53,38 @@ export const POST = withErrorHandling(async (req: Request) => {
 
   const result = await translateDocument(file, body.direction);
 
-  const record = await TranslationModel.create({
-    file,
-    direction: body.direction,
-    result,
-    createdBy: session.email,
-  });
+  // The translation itself has succeeded by this point — never let a
+  // persistence or audit-log hiccup throw away the result the user is
+  // waiting for. Save best-effort and still return the translation.
+  let recordId: string | null = null;
+  try {
+    const record = await TranslationModel.create({
+      file,
+      direction: body.direction,
+      result,
+      createdBy: session.email,
+    });
+    recordId = record._id.toString();
 
-  await logAudit({
-    action: "Document Translated",
-    documentName: file.fileName,
-    user: session.email,
-    status: result.directionMismatch || result.truncated ? "warning" : "completed",
-    details: `${DIRECTION_LABELS[body.direction]} · confidence ${Math.round(
-      result.confidence * 100
-    )}%${result.directionMismatch ? ` · detected ${result.detectedLanguage}` : ""}${
-      result.truncated ? " · source truncated" : ""
-    }`,
-  });
+    await logAudit({
+      action: "Document Translated",
+      documentName: file.fileName,
+      user: session.email,
+      status: result.directionMismatch || result.truncated ? "warning" : "completed",
+      details: `${directionLabel(body.direction)} · confidence ${Math.round(
+        result.confidence * 100
+      )}%${result.directionMismatch ? ` · detected ${result.detectedLanguage}` : ""}${
+        result.truncated ? " · source truncated" : ""
+      }`,
+      relatedTranslationId: recordId,
+    });
+  } catch (err) {
+    console.error("[api/translate] failed to persist translation:", err);
+  }
 
   return apiSuccess(
     {
-      id: record._id.toString(),
+      id: recordId,
       file,
       direction: body.direction,
       result,

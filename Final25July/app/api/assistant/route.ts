@@ -44,6 +44,46 @@ async function buildUserContext(user: SessionUser): Promise<string> {
     );
   });
 
+  // Full field-level and line-item detail for the single most recent
+  // comparison, so the assistant can actually answer "what's different"
+  // instead of only knowing a discrepancy count.
+  const latestComparison = comparisons[0];
+  if (latestComparison) {
+    lines.push(
+      `- Full detail for the most recent comparison (${latestComparison.documentKinds.join(" vs ")}, ${new Date(latestComparison.createdAt).toISOString().slice(0, 10)}):`
+    );
+    const mismatched = latestComparison.fieldDiffs.filter((f) => !f.withinTolerance).slice(0, 25);
+    if (mismatched.length > 0) {
+      lines.push("  Field differences (outside tolerance):");
+      mismatched.forEach((f) => {
+        lines.push(
+          `    • ${f.fieldName}: doc A = ${f.docAValue ?? "—"}, doc B = ${f.docBValue ?? "—"}` +
+            (f.docCValue != null ? `, doc C = ${f.docCValue}` : "") +
+            ` (${f.severity} severity, ${f.differenceType}) — ${f.rootCause}`
+        );
+      });
+    }
+    const variantItems = latestComparison.lineItemDiffs
+      .filter((d) => d.qtyVariance || d.priceVariance)
+      .slice(0, 25);
+    if (variantItems.length > 0) {
+      lines.push("  Line item differences:");
+      variantItems.forEach((d) => {
+        lines.push(
+          `    • ${d.description}: PO qty ${d.poQty ?? "—"} vs Inv qty ${d.invQty ?? "—"}` +
+            (d.grnQty != null ? ` vs GRN qty ${d.grnQty}` : "") +
+            `, PO price ${d.poPrice ?? "—"} vs Inv price ${d.invPrice ?? "—"} — ${d.explanation}`
+        );
+      });
+    }
+    if (mismatched.length === 0 && variantItems.length === 0) {
+      lines.push("  No field or line-item differences outside tolerance were found.");
+    }
+    if (latestComparison.aiSummary) {
+      lines.push(`  Executive summary: ${latestComparison.aiSummary}`);
+    }
+  }
+
   if (intelligent.length > 0) {
     lines.push(`- Intelligent comparisons: ${intelligent.length} recent.`);
     intelligent.forEach((r, i) => {
@@ -53,6 +93,37 @@ async function buildUserContext(user: SessionUser): Promise<string> {
           `${new Date(r.createdAt).toISOString().slice(0, 10)}`
       );
     });
+
+    // Full detail for the single most recent intelligent comparison — the
+    // aligned findings, similarities, and differences themselves, not just
+    // their counts, so questions like "what are the differences" are
+    // actually answerable rather than deflected.
+    const latestIntelligent = intelligent[0];
+    lines.push(
+      `- Full detail for the most recent intelligent comparison (${latestIntelligent.comparison.documentsCompared}, ${new Date(latestIntelligent.createdAt).toISOString().slice(0, 10)}):`
+    );
+    lines.push(`  Overview: ${latestIntelligent.comparison.overview}`);
+    lines.push(
+      `  Verdict: ${latestIntelligent.comparison.verdict.rating} — ${latestIntelligent.comparison.verdict.rationale}`
+    );
+    if (latestIntelligent.comparison.alignedFindings.length > 0) {
+      lines.push("  Aligned findings:");
+      latestIntelligent.comparison.alignedFindings.slice(0, 25).forEach((f) => {
+        const perDoc = f.perDocument
+          .map((pd) => {
+            const doc = latestIntelligent.documentSummaries.find((d) => d.index === pd.index);
+            return `${doc?.title ?? `Document ${pd.index + 1}`}: ${pd.value}`;
+          })
+          .join(" | ");
+        lines.push(`    • ${f.aspect} (${f.status}, ${f.severity}): ${f.details}${perDoc ? ` [${perDoc}]` : ""}`);
+      });
+    }
+    if (latestIntelligent.comparison.keySimilarities.length > 0) {
+      lines.push(`  Key similarities: ${latestIntelligent.comparison.keySimilarities.join("; ")}`);
+    }
+    if (latestIntelligent.comparison.keyDifferences.length > 0) {
+      lines.push(`  Key differences: ${latestIntelligent.comparison.keyDifferences.join("; ")}`);
+    }
   }
 
   if (audits.length > 0) {
@@ -112,7 +183,8 @@ export const POST = withErrorHandling(async (req: Request) => {
     session,
     conversation.messages,
     body.message,
-    userContext
+    userContext,
+    body.section
   );
 
   const aiMessage = {

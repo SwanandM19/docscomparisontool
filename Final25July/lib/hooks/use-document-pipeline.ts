@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useUploadThing } from "@/lib/uploadthing/react";
 import { registerUpload, extractDocument, ApiClientError } from "@/lib/api-client";
-import { useProcessingRegistry } from "@/lib/hooks/processing-registry";
 import type { DocumentKind, DocumentFileType, ExtractedDocumentData } from "@/types/document";
 
 export type PipelinePhase = "idle" | "uploading" | "extracting" | "schema" | "complete" | "error";
@@ -62,23 +61,6 @@ function fileTypeFromMime(mime: string, name: string): DocumentFileType {
 export function useDocumentPipeline(kind: DocumentKind) {
   const [state, setState] = useState<PipelineState>(initialState);
   const cancelledRef = useRef(false);
-  const jobId = useId();
-  const registry = useProcessingRegistry();
-
-  // Mirror this pipeline's in-flight status into the shared registry so the
-  // sidebar's "AI Processing" widget can show real counts/progress instead
-  // of static placeholder text. Cleared once idle/complete/error, and on
-  // unmount.
-  useEffect(() => {
-    if (!registry) return;
-    const isActive = state.phase !== "idle" && state.phase !== "complete" && state.phase !== "error";
-    registry.setJob(jobId, isActive ? { label: state.file?.name ?? kind, phase: state.phase, progress: state.progress } : null);
-  }, [registry, jobId, kind, state.phase, state.progress, state.file?.name]);
-
-  useEffect(() => {
-    return () => registry?.setJob(jobId, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId]);
 
   const { startUpload: startUploadThing } = useUploadThing("documentUploader", {
     onUploadProgress: (progress) => {

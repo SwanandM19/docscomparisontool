@@ -162,8 +162,20 @@
   }
   html {
     @apply font-sans;
+    /* Larger base so every rem-based size (text-xs / text-sm / text-base …)
+       scales up and the UI reads clearly. */
+    font-size: 18px;
   }
 }
+
+/* ─── Legibility: lift the hard-coded tiny arbitrary sizes ───
+   A lot of labels/timestamps use px values (text-[9px]…text-[13px]) that
+   don't scale with the root font-size. Nudge them all up a step. */
+.text-\[9px\]  { font-size: 11px !important; }
+.text-\[10px\] { font-size: 12px !important; }
+.text-\[11px\] { font-size: 13px !important; }
+.text-\[12px\] { font-size: 14px !important; }
+.text-\[13px\] { font-size: 15px !important; }
 
 /* ─── Grid background pattern ─── */
 .grid-background {

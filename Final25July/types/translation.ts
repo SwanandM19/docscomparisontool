@@ -1,15 +1,66 @@
 /**
- * Types for the Document Translation section — English ⇄ Marathi translation
- * of an uploaded document. Deliberately limited to this one language pair
- * (see lib/ai/translation.ts) so the prompt can be tuned for it.
+ * Types for the Document Translation section — translation of an uploaded
+ * document between any two supported languages (see lib/ai/translation.ts).
+ * Originally limited to English ⇄ Marathi; widened to the language list
+ * below, but "en-mr"/"mr-en" keep working exactly as before since they're
+ * just one pair among the set.
  */
 
-export type TranslationLanguage = "en" | "mr";
+export type TranslationLanguage =
+  | "en"
+  | "mr"
+  | "hi"
+  | "gu"
+  | "bn"
+  | "ta"
+  | "te"
+  | "kn"
+  | "ml"
+  | "pa"
+  | "de"
+  | "fr"
+  | "es"
+  | "ja"
+  | "zh";
 
-/** The only two directions this feature supports. */
-export type TranslationDirection = "en-mr" | "mr-en";
+export const LANGUAGE_CODES: TranslationLanguage[] = [
+  "en",
+  "mr",
+  "hi",
+  "gu",
+  "bn",
+  "ta",
+  "te",
+  "kn",
+  "ml",
+  "pa",
+  "de",
+  "fr",
+  "es",
+  "ja",
+  "zh",
+];
 
-export type TranslationFileType = "pdf" | "image" | "word" | "excel" | "text";
+/** Any "source-target" pair of supported languages, e.g. "en-mr", "hi-ta". */
+export type TranslationDirection = `${TranslationLanguage}-${TranslationLanguage}`;
+
+export function isTranslationLanguage(value: string): value is TranslationLanguage {
+  return (LANGUAGE_CODES as string[]).includes(value);
+}
+
+/** Validates a "source-target" direction string: both known languages, and distinct. */
+export function isTranslationDirection(value: string): value is TranslationDirection {
+  const [source, target] = value.split("-");
+  return (
+    source !== undefined &&
+    target !== undefined &&
+    isTranslationLanguage(source) &&
+    isTranslationLanguage(target) &&
+    source !== target
+  );
+}
+
+export type TranslationFileType = "pdf" | "image" | "word" | "excel" | "text" | "rtf";
 
 export interface TranslationSourceFile {
   fileUrl: string;
@@ -50,17 +101,39 @@ export interface TranslationRecord {
 export const LANGUAGE_LABELS: Record<TranslationLanguage, string> = {
   en: "English",
   mr: "Marathi",
-};
-
-export const DIRECTION_LABELS: Record<TranslationDirection, string> = {
-  "en-mr": "English → Marathi",
-  "mr-en": "Marathi → English",
+  hi: "Hindi",
+  gu: "Gujarati",
+  bn: "Bengali",
+  ta: "Tamil",
+  te: "Telugu",
+  kn: "Kannada",
+  ml: "Malayalam",
+  pa: "Punjabi",
+  de: "German",
+  fr: "French",
+  es: "Spanish",
+  ja: "Japanese",
+  zh: "Chinese",
 };
 
 export function directionSource(direction: TranslationDirection): TranslationLanguage {
-  return direction === "en-mr" ? "en" : "mr";
+  return direction.split("-")[0] as TranslationLanguage;
 }
 
 export function directionTarget(direction: TranslationDirection): TranslationLanguage {
-  return direction === "en-mr" ? "mr" : "en";
+  return direction.split("-")[1] as TranslationLanguage;
 }
+
+/** Human-readable "Source → Target" label for any supported direction. */
+export function directionLabel(direction: TranslationDirection): string {
+  return `${LANGUAGE_LABELS[directionSource(direction)]} → ${LANGUAGE_LABELS[directionTarget(direction)]}`;
+}
+
+/**
+ * Kept for the two directions the UI ships as quick-pick defaults; any other
+ * pair is still fully supported via directionLabel() above.
+ */
+export const DIRECTION_LABELS: Record<"en-mr" | "mr-en", string> = {
+  "en-mr": "English → Marathi",
+  "mr-en": "Marathi → English",
+};

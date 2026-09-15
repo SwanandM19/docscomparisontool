@@ -1,813 +1,618 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
-  ReceiptText,
-  Plus,
-  Trash2,
-  Download,
-  Share2,
-  Save,
+  Upload,
+  FileText,
+  X,
   Loader2,
   AlertTriangle,
   Check,
-  FolderOpen,
-  FileText,
+  Copy,
+  Download,
   RefreshCcw,
   Sparkles,
+  Wand2,
+  ScanSearch,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { calculateInvoice, lineAmount, formatAmount } from "@/lib/invoice/calculate";
+import { uploadFiles } from "@/lib/uploadthing/react";
+import { buildRtfDocument, downloadRtf, type RtfBlock } from "@/lib/rtf";
 import {
-  createInvoice,
-  updateInvoice,
-  getInvoices,
-  deleteInvoice,
-  renderInvoicePdf,
+  detectDocumentFields,
+  fillInvoiceDocument,
+  renderFilledDocumentPdf,
   ApiClientError,
 } from "@/lib/api-client";
-import {
-  TAX_MODE_LABELS,
-  type InvoiceData,
-  type InvoiceLineItem,
-  type InvoiceParty,
-  type InvoiceRecord,
-  type InvoiceTaxMode,
-} from "@/types/invoice";
+import type { DetectedField, FilledField, InvoiceFillResult } from "@/types/invoice-fill";
 
-const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED"];
-const TAX_MODES: InvoiceTaxMode[] = ["cgst_sgst", "igst", "none"];
-const COMMON_TAX_RATES = [0, 5, 12, 18, 28];
+const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.docx,.doc,.rtf,.txt,.csv,.xlsx,.xls";
+const MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024;
 
-function newLineItem(): InvoiceLineItem {
-  return {
-    id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    description: "",
-    hsn: "",
-    quantity: 1,
-    unitPrice: 0,
-    taxRate: 18,
-  };
+interface UploadedFileInfo {
+  fileUrl: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
 }
 
-function emptyParty(): InvoiceParty {
-  return { name: "", address: "", gstin: "", email: "", phone: "" };
+function formatSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+function downloadText(fileName: string, content: string) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
-/** A reasonable starting invoice number, e.g. INV-2026-0042. */
-function suggestInvoiceNumber(): string {
-  const now = new Date();
-  const seq = String(Math.floor(now.getTime() / 1000) % 10000).padStart(4, "0");
-  return `INV-${now.getFullYear()}-${seq}`;
-}
-
-function blankInvoice(): InvoiceData {
-  return {
-    invoiceNumber: suggestInvoiceNumber(),
-    invoiceDate: todayIso(),
-    dueDate: "",
-    currency: "INR",
-    taxMode: "cgst_sgst",
-    seller: emptyParty(),
-    buyer: emptyParty(),
-    lineItems: [newLineItem()],
-    discount: 0,
-    shipping: 0,
-    notes: "",
-    terms: "Payment due within 30 days of the invoice date.",
-  };
-}
-
-/** Labelled field wrapper so every input in the form lines up the same way. */
-function Field({
-  label,
-  children,
-  className,
-  hint,
-}: {
-  label: string;
-  children: React.ReactNode;
-  className?: string;
-  hint?: string;
-}) {
-  return (
-    <div className={cn("space-y-1.5", className)}>
-      <label className="text-[11px] font-medium text-muted-foreground block">{label}</label>
-      {children}
-      {hint && <p className="text-[10px] text-muted-foreground/60">{hint}</p>}
-    </div>
-  );
-}
-
-function PartyFields({
-  party,
-  onChange,
-}: {
-  party: InvoiceParty;
-  onChange: (patch: Partial<InvoiceParty>) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <Field label="Name">
-        <Input
-          value={party.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          placeholder="Business or person"
-        />
-      </Field>
-      <Field label="Address">
-        <Textarea
-          value={party.address}
-          onChange={(e) => onChange({ address: e.target.value })}
-          placeholder={"Street\nCity, State PIN"}
-          rows={3}
-          className="text-sm"
-        />
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="GSTIN">
-          <Input
-            value={party.gstin}
-            onChange={(e) => onChange({ gstin: e.target.value.toUpperCase() })}
-            placeholder="27ABCDE1234F1Z5"
-          />
-        </Field>
-        <Field label="Phone">
-          <Input
-            value={party.phone}
-            onChange={(e) => onChange({ phone: e.target.value })}
-            placeholder="+91 98765 43210"
-          />
-        </Field>
-      </div>
-      <Field label="Email">
-        <Input
-          type="email"
-          value={party.email}
-          onChange={(e) => onChange({ email: e.target.value })}
-          placeholder="billing@example.com"
-        />
-      </Field>
-    </div>
-  );
-}
+type Phase = "upload" | "detecting" | "fields" | "running" | "results";
 
 export default function InvoiceBuilder() {
-  const [data, setData] = useState<InvoiceData>(blankInvoice);
-  const [savedId, setSavedId] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [uploaded, setUploaded] = useState<UploadedFileInfo | null>(null);
+  const [phase, setPhase] = useState<Phase>("upload");
+  const [progressLabel, setProgressLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | "save" | "download" | "share">(null);
 
-  const [showSaved, setShowSaved] = useState(false);
-  const [saved, setSaved] = useState<InvoiceRecord[] | null>(null);
-  const [loadingSaved, setLoadingSaved] = useState(false);
+  // Detected layout (Phase A) — one text value per detected field.
+  const [documentType, setDocumentType] = useState("");
+  const [detectedLayout, setDetectedLayout] = useState("");
+  const [detectedFields, setDetectedFields] = useState<DetectedField[]>([]);
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState("");
 
-  const totals = useMemo(() => calculateInvoice(data), [data]);
+  // Fill result (Phase B).
+  const [result, setResult] = useState<InvoiceFillResult | null>(null);
+  const [docText, setDocText] = useState("");
+  const [fields, setFields] = useState<FilledField[]>([]);
+  const [copied, setCopied] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
-  // Transient confirmations ("Saved", "Shared") clear themselves.
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 3000);
-    return () => clearTimeout(timer);
-  }, [notice]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const patch = useCallback((update: Partial<InvoiceData>) => {
-    setData((prev) => ({ ...prev, ...update }));
+  const selectFile = useCallback((incoming: FileList | File[]) => {
+    const picked = Array.from(incoming)[0];
+    if (!picked) return;
+    if (picked.size > MAX_FILE_SIZE_BYTES) {
+      setError(`"${picked.name}" is larger than 16MB.`);
+      return;
+    }
+    setError(null);
+    setFile(picked);
   }, []);
 
-  const patchItem = useCallback((id: string, update: Partial<InvoiceLineItem>) => {
-    setData((prev) => ({
-      ...prev,
-      lineItems: prev.lineItems.map((item) => (item.id === id ? { ...item, ...update } : item)),
-    }));
-  }, []);
-
-  const addItem = () =>
-    setData((prev) => ({ ...prev, lineItems: [...prev.lineItems, newLineItem()] }));
-
-  const removeItem = (id: string) =>
-    setData((prev) => ({
-      ...prev,
-      // Always keep at least one row so the table never collapses to nothing.
-      lineItems:
-        prev.lineItems.length > 1
-          ? prev.lineItems.filter((item) => item.id !== id)
-          : prev.lineItems,
-    }));
-
-  /** Validates the few fields the server also insists on, for a faster message. */
-  const validate = (): string | null => {
-    if (!data.invoiceNumber.trim()) return "Give the invoice a number before saving or sharing.";
-    if (data.lineItems.length === 0) return "Add at least one line item.";
-    if (data.lineItems.every((i) => !i.description.trim()))
-      return "Describe at least one line item.";
-    return null;
+  const reset = () => {
+    setFile(null);
+    setUploaded(null);
+    setDocumentType("");
+    setDetectedLayout("");
+    setDetectedFields([]);
+    setFieldValues({});
+    setNotes("");
+    setResult(null);
+    setDocText("");
+    setFields([]);
+    setError(null);
+    setPdfError(null);
+    setProgressLabel("");
+    setPhase("upload");
   };
 
-  const buildPdfBlob = async (): Promise<Blob> => renderInvoicePdf(data);
-
-  const fileName = `invoice-${(data.invoiceNumber || "draft").replace(/[^A-Za-z0-9._-]/g, "-")}.pdf`;
-
-  const handleDownload = async () => {
-    const invalid = validate();
-    if (invalid) return setError(invalid);
+  /** Phase A: upload the file, then ask the AI to detect its fields. */
+  const handleDetect = async () => {
+    if (!file) return;
+    setPhase("detecting");
     setError(null);
-    setBusy("download");
     try {
-      const blob = await buildPdfBlob();
+      setProgressLabel(`Uploading ${file.name}…`);
+      const uploadedFiles = await uploadFiles("genericUploader", { files: [file] });
+      const serverData = uploadedFiles?.[0]?.serverData;
+      if (!serverData) throw new Error(`Upload failed for ${file.name}.`);
+
+      const fileInfo: UploadedFileInfo = {
+        fileUrl: serverData.fileUrl,
+        fileName: serverData.fileName,
+        fileSize: serverData.fileSize,
+        mimeType: serverData.mimeType,
+      };
+      setUploaded(fileInfo);
+
+      setProgressLabel("Reading the document's layout and finding its fields…");
+      const data = await detectDocumentFields({ file: fileInfo });
+
+      setDocumentType(data.documentType);
+      setDetectedLayout(data.detectedLayout);
+      setDetectedFields(data.fields);
+      setFieldValues(Object.fromEntries(data.fields.map((f) => [f.id, f.originalValue])));
+      setPhase("fields");
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Could not read the document's fields."
+      );
+      setPhase("upload");
+    }
+  };
+
+  const setFieldValue = (id: string, value: string) =>
+    setFieldValues((prev) => ({ ...prev, [id]: value }));
+
+  const blankCount = detectedFields.filter((f) => f.isBlank).length;
+
+  /** Phase B: send the user's per-field values and fill the document. */
+  const handleFill = async () => {
+    if (!uploaded) return;
+    setPhase("running");
+    setError(null);
+    try {
+      setProgressLabel("Filling in your values and finishing the document…");
+      const data = await fillInvoiceDocument({
+        file: uploaded,
+        fields: detectedFields.map((f) => ({
+          id: f.id,
+          label: f.label,
+          value: fieldValues[f.id] ?? "",
+        })),
+        notes: notes.trim(),
+      });
+
+      setResult(data);
+      setDocText(data.filledDocument);
+      setFields(data.fields);
+      setPhase("results");
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Could not fill the document."
+      );
+      setPhase("fields");
+    }
+  };
+
+  const patchField = (id: string, value: string) =>
+    setFields((prev) => prev.map((f) => (f.id === id ? { ...f, filledValue: value } : f)));
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(docText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  const baseName = (result ? result.documentType : "filled-document")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  const handleDownloadRtf = () => {
+    if (!result) return;
+    const blocks: RtfBlock[] = [
+      { style: "h1", text: `${result.documentType} (completed)` },
+    ];
+    docText.split("\n").forEach((line) => blocks.push({ style: "p", text: line }));
+    if (fields.length) {
+      blocks.push({ style: "h2", text: "Filled fields" });
+      fields.forEach((f) =>
+        blocks.push({ style: "p", text: `${f.label}: ${f.filledValue || "(blank)"}` })
+      );
+    }
+    downloadRtf(`${baseName}.rtf`, buildRtfDocument(blocks));
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!result) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const blob = await renderFilledDocumentPdf({
+        documentType: result.documentType,
+        content: docText,
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = fileName;
+      link.download = `${baseName}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setNotice("Invoice downloaded.");
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Could not generate the PDF.");
+      setPdfError(err instanceof ApiClientError ? err.message : "Could not generate the PDF.");
     } finally {
-      setBusy(null);
+      setPdfBusy(false);
     }
   };
 
-  const handleShare = async () => {
-    const invalid = validate();
-    if (invalid) return setError(invalid);
-    setError(null);
-    setBusy("share");
-    try {
-      const blob = await buildPdfBlob();
-      const pdfFile = new File([blob], fileName, { type: "application/pdf" });
+  /* ─────────────── Detecting / Running ─────────────── */
+  if (phase === "detecting" || phase === "running") {
+    const isDetecting = phase === "detecting";
+    return (
+      <div className="max-w-[900px] mx-auto flex flex-col items-center justify-center py-32 gap-4 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-brand/10 flex items-center justify-center">
+          {isDetecting ? (
+            <ScanSearch className="w-7 h-7 text-brand animate-pulse" />
+          ) : (
+            <Wand2 className="w-7 h-7 text-brand animate-pulse" />
+          )}
+        </div>
+        <p className="text-sm font-semibold">
+          {isDetecting ? "Reading your document" : "Filling your document"}
+        </p>
+        <p className="text-xs text-muted-foreground flex items-center gap-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          {progressLabel}
+        </p>
+        <p className="text-[11px] text-muted-foreground/60 max-w-sm">
+          {isDetecting
+            ? "The AI reads your document's exact layout and works out every field on it, and which ones are still blank."
+            : "The AI writes your values into the document, doing the line-item and tax arithmetic for you."}
+        </p>
+      </div>
+    );
+  }
 
-      // Web Share with file attachments is only available on secure origins
-      // and mostly on mobile — fall back to a download everywhere else.
-      const canShareFile =
-        typeof navigator !== "undefined" &&
-        typeof navigator.share === "function" &&
-        typeof navigator.canShare === "function" &&
-        navigator.canShare({ files: [pdfFile] });
-
-      if (canShareFile) {
-        await navigator.share({
-          files: [pdfFile],
-          title: `Invoice ${data.invoiceNumber}`,
-          text: `Invoice ${data.invoiceNumber}${
-            data.seller.name ? ` from ${data.seller.name}` : ""
-          } — ${formatAmount(totals.grandTotal, data.currency)}`,
-        });
-        setNotice("Invoice shared.");
-      } else {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        setNotice("Sharing isn't available in this browser — the PDF was downloaded instead.");
-      }
-    } catch (err) {
-      // The user dismissing the share sheet throws AbortError; that's not an error.
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setBusy(null);
-        return;
-      }
-      setError(err instanceof ApiClientError ? err.message : "Could not share the invoice.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleSave = async () => {
-    const invalid = validate();
-    if (invalid) return setError(invalid);
-    setError(null);
-    setBusy("save");
-    try {
-      const record = savedId
-        ? await updateInvoice(savedId, { data, status: "final" })
-        : await createInvoice({ data, status: "final" });
-      setSavedId(record._id);
-      setSaved(null); // saved list is now stale
-      setNotice(savedId ? "Invoice updated." : "Invoice saved.");
-    } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Could not save the invoice.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const loadSavedList = async () => {
-    setLoadingSaved(true);
-    try {
-      const { invoices } = await getInvoices();
-      setSaved(invoices);
-    } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Could not load saved invoices.");
-    } finally {
-      setLoadingSaved(false);
-    }
-  };
-
-  const toggleSavedPanel = () => {
-    const next = !showSaved;
-    setShowSaved(next);
-    if (next && saved === null) void loadSavedList();
-  };
-
-  const openSaved = (record: InvoiceRecord) => {
-    setData(record.data);
-    setSavedId(record._id);
-    setShowSaved(false);
-    setError(null);
-    setNotice(`Loaded invoice ${record.data.invoiceNumber}.`);
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteInvoice(id);
-      setSaved((prev) => prev?.filter((r) => r._id !== id) ?? null);
-      if (savedId === id) setSavedId(null);
-    } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Could not delete the invoice.");
-    }
-  };
-
-  const startNew = () => {
-    setData(blankInvoice());
-    setSavedId(null);
-    setError(null);
-    setNotice("Started a new invoice.");
-  };
-
-  return (
-    <div className="stagger-children max-w-[1200px] mx-auto space-y-5">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h2 className="text-2xl font-bold tracking-tight">Invoice Builder</h2>
-            <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold">
-              <Sparkles className="w-3 h-3 mr-1" />
-              Template
-            </Badge>
-            {savedId && (
-              <Badge className="bg-success/10 text-success border-success/20 text-[10px] font-semibold">
-                Saved
+  /* ─────────────── Fields review (Phase A results) ─────────────── */
+  if (phase === "fields") {
+    return (
+      <div className="stagger-children max-w-[900px] mx-auto space-y-5">
+        <div className="text-center mb-2">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <h2 className="text-2xl font-bold tracking-tight">{documentType || "Detected Document"}</h2>
+            {blankCount > 0 && (
+              <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold">
+                {blankCount} blank field{blankCount === 1 ? "" : "s"}
               </Badge>
             )}
           </div>
-          <p className="text-muted-foreground text-sm">
-            Fill in the fields and download, share, or save the finished invoice.
-          </p>
+          <p className="text-muted-foreground max-w-xl mx-auto text-sm">{detectedLayout}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={toggleSavedPanel} className="gap-1.5 text-xs">
-            <FolderOpen className="w-3.5 h-3.5" />
-            Saved invoices
-          </Button>
-          <Button variant="outline" size="sm" onClick={startNew} className="gap-1.5 text-xs">
-            <RefreshCcw className="w-3.5 h-3.5" />
-            New
-          </Button>
-        </div>
-      </div>
 
-      {/* Saved invoices panel */}
-      {showSaved && (
         <Card className="border-border/80 shadow-sm">
           <CardHeader className="py-4 px-6 border-b border-border/40">
-            <CardTitle className="text-sm font-semibold">Saved invoices</CardTitle>
+            <CardTitle className="text-sm font-semibold">Fill in the values</CardTitle>
             <CardDescription className="text-xs">
-              Open one to keep editing, or remove it
+              Fields highlighted in amber were blank on your document. Type a value into any field
+              you want filled or changed
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-4 space-y-2.5 max-h-[520px] overflow-y-auto">
+            {detectedFields.length === 0 && (
+              <p className="text-xs text-muted-foreground/70">
+                No discrete fields were detected on this document.
+              </p>
+            )}
+            {detectedFields.map((f) => (
+              <div
+                key={f.id}
+                className={cn(
+                  "space-y-1 rounded-lg p-2 -mx-2",
+                  f.isBlank && "bg-warning/5 border border-warning/25"
+                )}
+              >
+                <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
+                  {f.label}
+                  {f.isBlank && (
+                    <span className="text-[9px] uppercase text-warning font-semibold">blank</span>
+                  )}
+                </label>
+                <Input
+                  value={fieldValues[f.id] ?? ""}
+                  onChange={(e) => setFieldValue(f.id, e.target.value)}
+                  placeholder={f.isBlank ? "Type a value…" : "—"}
+                />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/80 shadow-sm">
+          <CardHeader className="py-3 px-6 border-b border-border/40">
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Additional notes (optional)
+            </CardTitle>
+            <CardDescription className="text-[11px]">
+              Anything not covered above, e.g. &quot;make the due date 30 days from the invoice date&quot;
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4">
-            {loadingSaved ? (
-              <p className="text-xs text-muted-foreground flex items-center gap-2 py-4 justify-center">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Loading…
-              </p>
-            ) : saved && saved.length > 0 ? (
-              <div className="space-y-2">
-                {saved.map((record) => (
-                  <div
-                    key={record._id}
-                    className="flex items-center gap-3 rounded-lg border border-border/50 bg-secondary/20 px-3 py-2"
-                  >
-                    <FileText className="w-4 h-4 text-brand shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium truncate">
-                        {record.data.invoiceNumber}
-                        {record.data.buyer.name ? ` · ${record.data.buyer.name}` : ""}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {formatAmount(record.totals.grandTotal, record.data.currency)} ·{" "}
-                        {new Date(record.createdAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => openSaved(record)}
-                      className="text-[11px]"
-                    >
-                      Open
-                    </Button>
-                    <button
-                      onClick={() => handleDelete(record._id)}
-                      aria-label="Delete invoice"
-                      className="text-muted-foreground/50 hover:text-destructive transition-colors shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground/70 text-center py-4">
-                Nothing saved yet.
-              </p>
-            )}
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Optional notes for the AI"
+              className="text-sm"
+            />
           </CardContent>
         </Card>
-      )}
 
-      {/* Invoice meta */}
-      <Card className="border-border/80 shadow-sm">
-        <CardHeader className="py-4 px-6 border-b border-border/40">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <ReceiptText className="w-4 h-4 text-brand" />
-            Invoice details
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Field label="Invoice number">
-              <Input
-                value={data.invoiceNumber}
-                onChange={(e) => patch({ invoiceNumber: e.target.value })}
-                placeholder="INV-2026-0001"
-              />
-            </Field>
-            <Field label="Invoice date">
-              <Input
-                type="date"
-                value={data.invoiceDate}
-                onChange={(e) => patch({ invoiceDate: e.target.value })}
-              />
-            </Field>
-            <Field label="Due date">
-              <Input
-                type="date"
-                value={data.dueDate}
-                onChange={(e) => patch({ dueDate: e.target.value })}
-              />
-            </Field>
-            <Field label="Currency">
-              <div className="flex flex-wrap gap-1.5">
-                {CURRENCIES.map((code) => (
-                  <button
-                    key={code}
-                    onClick={() => patch({ currency: code })}
-                    aria-pressed={data.currency === code}
-                    className={cn(
-                      "px-2.5 h-8 rounded-lg border text-xs font-medium transition-colors",
-                      data.currency === code
-                        ? "border-brand bg-brand/10 text-brand"
-                        : "border-border/60 text-muted-foreground hover:bg-secondary/40"
-                    )}
-                  >
-                    {code}
-                  </button>
-                ))}
-              </div>
-            </Field>
+        {error && (
+          <p className="text-xs text-destructive flex items-center gap-1.5 justify-center">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {error}
+          </p>
+        )}
+
+        <div className="flex flex-col items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={reset} className="gap-1.5 text-xs">
+              <RefreshCcw className="w-3.5 h-3.5" />
+              Start over
+            </Button>
+            <Button
+              onClick={handleFill}
+              className="gap-2 bg-brand hover:bg-brand/90 text-brand-foreground font-semibold rounded-xl px-6 h-10"
+            >
+              <Wand2 className="w-4 h-4" />
+              Fill Document
+            </Button>
           </div>
+        </div>
+      </div>
+    );
+  }
 
-          <Separator className="my-5" />
-
-          <Field label="Tax treatment" hint="Applies to every line item on this invoice.">
-            <div className="flex flex-wrap gap-2">
-              {TAX_MODES.map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => patch({ taxMode: mode })}
-                  aria-pressed={data.taxMode === mode}
-                  className={cn(
-                    "px-3 h-9 rounded-lg border text-xs font-medium transition-colors",
-                    data.taxMode === mode
-                      ? "border-brand bg-brand/10 text-brand"
-                      : "border-border/60 text-muted-foreground hover:bg-secondary/40"
-                  )}
-                >
-                  {TAX_MODE_LABELS[mode]}
-                </button>
-              ))}
+  /* ─────────────── Results (Phase B results) ─────────────── */
+  if (phase === "results" && result) {
+    return (
+      <div className="stagger-children max-w-[1100px] mx-auto space-y-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-xl font-bold tracking-tight truncate">{result.documentType}</h2>
+              <Badge className="bg-success/10 text-success border-success/20 text-[10px] font-semibold shrink-0">
+                {fields.length} field{fields.length === 1 ? "" : "s"} filled
+              </Badge>
             </div>
-          </Field>
-        </CardContent>
-      </Card>
+            <p className="text-xs text-muted-foreground">{result.detectedLayout}</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={reset} className="gap-1.5 text-xs">
+              <RefreshCcw className="w-3.5 h-3.5" />
+              New document
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCopy} className="gap-1.5 text-xs">
+              {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => downloadText(`${baseName}.txt`, docText)} className="gap-1.5 text-xs">
+              <Download className="w-3.5 h-3.5" />
+              .txt
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadRtf} className="gap-1.5 text-xs">
+              <Download className="w-3.5 h-3.5" />
+              .rtf
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleDownloadPdf}
+              disabled={pdfBusy}
+              className="gap-1.5 text-xs bg-brand hover:bg-brand/90 text-brand-foreground"
+            >
+              {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              Download .pdf
+            </Button>
+          </div>
+        </div>
 
-      {/* Parties */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader className="py-4 px-6 border-b border-border/40">
-            <CardTitle className="text-sm font-semibold">From</CardTitle>
-            <CardDescription className="text-xs">Your business details</CardDescription>
-          </CardHeader>
-          <CardContent className="p-6">
-            <PartyFields
-              party={data.seller}
-              onChange={(update) => patch({ seller: { ...data.seller, ...update } })}
-            />
-          </CardContent>
-        </Card>
+        {pdfError && (
+          <p className="text-xs text-destructive flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {pdfError}
+          </p>
+        )}
 
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader className="py-4 px-6 border-b border-border/40">
-            <CardTitle className="text-sm font-semibold">Bill to</CardTitle>
-            <CardDescription className="text-xs">Who is being invoiced</CardDescription>
-          </CardHeader>
-          <CardContent className="p-6">
-            <PartyFields
-              party={data.buyer}
-              onChange={(update) => patch({ buyer: { ...data.buyer, ...update } })}
-            />
-          </CardContent>
-        </Card>
+        {result.unresolved.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5">
+            <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              These fields were left without a value, so they stayed blank:{" "}
+              <span className="font-semibold text-foreground">
+                {result.unresolved.join(", ")}
+              </span>
+              . Edit them below, or go back and fill them in.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Editable fields */}
+          <Card className="border-border/80 shadow-sm">
+            <CardHeader className="py-3 px-5 border-b border-border/40">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Filled fields
+              </CardTitle>
+              <CardDescription className="text-[11px]">
+                From your document&apos;s layout, edit any value
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4 space-y-2.5 max-h-[560px] overflow-y-auto">
+              {fields.length === 0 && (
+                <p className="text-xs text-muted-foreground/70">
+                  No discrete fields detected. See the completed document alongside.
+                </p>
+              )}
+              {fields.map((f) => (
+                <div key={f.id} className="space-y-1">
+                  <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
+                    {f.label}
+                    {f.wasBlank && (
+                      <span className="text-[9px] uppercase text-brand/80 font-semibold">was blank</span>
+                    )}
+                  </label>
+                  <Input
+                    value={f.filledValue}
+                    onChange={(e) => patchField(f.id, e.target.value)}
+                    placeholder="—"
+                  />
+                  {f.note && <p className="text-[10px] text-muted-foreground/60">{f.note}</p>}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Completed document */}
+          <Card className="border-brand/30 shadow-sm">
+            <CardHeader className="py-3 px-5 border-b border-border/40">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-brand">
+                Completed document
+              </CardTitle>
+              <CardDescription className="text-[11px]">
+                Editable, this is what gets downloaded
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4">
+              <Textarea
+                value={docText}
+                onChange={(e) => setDocText(e.target.value)}
+                rows={22}
+                className="text-xs font-mono leading-relaxed whitespace-pre"
+              />
+            </CardContent>
+          </Card>
+        </div>
+
+        <p className="text-[11px] text-muted-foreground/60 text-center">
+          The AI fills the values you provided and keeps your document&apos;s original layout. Check
+          every figure before you send it.
+        </p>
+      </div>
+    );
+  }
+
+  /* ─────────────── Upload ─────────────── */
+  return (
+    <div className="stagger-children max-w-[900px] mx-auto">
+      <div className="text-center mb-8">
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <h2 className="text-2xl font-bold tracking-tight">Document Filler</h2>
+          <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold">
+            <Sparkles className="w-3 h-3 mr-1" />
+            From your document
+          </Badge>
+        </div>
+        <p className="text-muted-foreground max-w-xl mx-auto text-sm">
+          Upload your own invoice, bill, or form (blank or partly filled, PDF/Word/RTF/image) and the
+          AI reads its exact layout, shows you every field it found (blanks included), and lets you type
+          each value in before filling and downloading it.
+        </p>
       </div>
 
-      {/* Line items */}
-      <Card className="border-border/80 shadow-sm">
-        <CardHeader className="py-4 px-6 border-b border-border/40">
-          <CardTitle className="text-sm font-semibold">Line items</CardTitle>
-          <CardDescription className="text-xs">
-            Amounts are calculated as quantity × rate
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-6 space-y-3">
-          {/* Column headers — hidden on small screens where rows stack */}
-          <div className="hidden lg:grid grid-cols-[1fr_110px_80px_120px_100px_110px_32px] gap-2 px-1">
-            {["Description", "HSN/SAC", "Qty", "Rate", "Tax %", "Amount", ""].map((label, i) => (
-              <span
-                key={i}
-                className={cn(
-                  "text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70",
-                  i >= 2 && i <= 5 && "text-right"
-                )}
-              >
-                {label}
-              </span>
-            ))}
-          </div>
+      {/* Handwritten/readability note */}
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 mb-4">
+        <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <span className="font-semibold text-foreground">Note:</span> If a document is
+          handwritten and not sufficiently readable, the accuracy of the generated results may
+          be affected.
+        </p>
+      </div>
 
-          {data.lineItems.map((item) => (
-            <div
-              key={item.id}
-              className="grid grid-cols-1 lg:grid-cols-[1fr_110px_80px_120px_100px_110px_32px] gap-2 items-center rounded-lg border border-border/40 lg:border-0 p-3 lg:p-0"
-            >
-              <Input
-                value={item.description}
-                onChange={(e) => patchItem(item.id, { description: e.target.value })}
-                placeholder="Item or service description"
-              />
-              <Input
-                value={item.hsn}
-                onChange={(e) => patchItem(item.id, { hsn: e.target.value })}
-                placeholder="HSN"
-              />
-              <Input
-                type="number"
-                min={0}
-                step="any"
-                value={item.quantity}
-                onChange={(e) => patchItem(item.id, { quantity: Number(e.target.value) || 0 })}
-                className="text-right"
-              />
-              <Input
-                type="number"
-                min={0}
-                step="any"
-                value={item.unitPrice}
-                onChange={(e) => patchItem(item.id, { unitPrice: Number(e.target.value) || 0 })}
-                className="text-right"
-              />
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                step="any"
-                list="invoice-tax-rates"
-                disabled={data.taxMode === "none"}
-                value={item.taxRate}
-                onChange={(e) => patchItem(item.id, { taxRate: Number(e.target.value) || 0 })}
-                className="text-right"
-              />
-              <div className="text-right text-sm font-semibold tabular-nums px-1">
-                {formatAmount(lineAmount(item), data.currency)}
+      {/* Dropzone */}
+      <Card
+        className={cn(
+          "border-2 transition-all duration-300 mb-6",
+          isDragOver ? "border-brand bg-brand/[0.03]" : "border-dashed border-border/70"
+        )}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          if (e.dataTransfer.files?.length) selectFile(e.dataTransfer.files);
+        }}
+      >
+        <CardContent className="p-8">
+          <input
+            ref={inputRef}
+            type="file"
+            accept={ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) selectFile(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => inputRef.current?.click()}
+            className="w-full flex flex-col items-center justify-center gap-2 py-8 rounded-xl hover:bg-secondary/40 transition-colors cursor-pointer"
+          >
+            <Upload className="w-7 h-7 text-muted-foreground/50" />
+            <span className="text-sm font-medium text-muted-foreground">
+              {file ? "Choose a different document" : "Add your invoice / form"}
+            </span>
+            <span className="text-[11px] text-muted-foreground/60">
+              PDF, image, Word, RTF, Excel/CSV, or text · up to 16MB · drag &amp; drop or click
+            </span>
+          </button>
+
+          {file && (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-border/50 bg-secondary/20 px-3 py-2">
+              <FileText className="w-4 h-4 text-brand shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium truncate">{file.name}</p>
+                <p className="text-[10px] text-muted-foreground">{formatSize(file.size)}</p>
               </div>
               <button
-                onClick={() => removeItem(item.id)}
-                disabled={data.lineItems.length === 1}
-                aria-label="Remove line item"
-                className="justify-self-end text-muted-foreground/50 hover:text-destructive transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
+                onClick={() => setFile(null)}
+                aria-label="Remove file"
+                className="text-muted-foreground/50 hover:text-destructive transition-colors shrink-0"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
-          ))}
-
-          <datalist id="invoice-tax-rates">
-            {COMMON_TAX_RATES.map((rate) => (
-              <option key={rate} value={rate} />
-            ))}
-          </datalist>
-
-          <Button variant="outline" size="sm" onClick={addItem} className="gap-1.5 text-xs mt-1">
-            <Plus className="w-3.5 h-3.5" />
-            Add line item
-          </Button>
+          )}
         </CardContent>
       </Card>
 
-      {/* Totals + notes */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader className="py-4 px-6 border-b border-border/40">
-            <CardTitle className="text-sm font-semibold">Notes &amp; terms</CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-3">
-            <Field label="Notes">
-              <Textarea
-                value={data.notes}
-                onChange={(e) => patch({ notes: e.target.value })}
-                placeholder="Bank details, payment reference, thanks…"
-                rows={3}
-                className="text-sm"
-              />
-            </Field>
-            <Field label="Terms & conditions">
-              <Textarea
-                value={data.terms}
-                onChange={(e) => patch({ terms: e.target.value })}
-                rows={3}
-                className="text-sm"
-              />
-            </Field>
-          </CardContent>
-        </Card>
-
-        <Card className="border-brand/30 shadow-sm">
-          <CardHeader className="py-4 px-6 border-b border-border/40">
-            <CardTitle className="text-sm font-semibold">Summary</CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Discount">
-                <Input
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={data.discount}
-                  onChange={(e) => patch({ discount: Number(e.target.value) || 0 })}
-                  className="text-right"
-                />
-              </Field>
-              <Field label="Shipping / other">
-                <Input
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={data.shipping}
-                  onChange={(e) => patch({ shipping: Number(e.target.value) || 0 })}
-                  className="text-right"
-                />
-              </Field>
-            </div>
-
-            <Separator />
-
-            <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span className="font-medium tabular-nums">
-                  {formatAmount(totals.subtotal, data.currency)}
-                </span>
-              </div>
-              {totals.discount > 0 && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Discount</span>
-                    <span className="font-medium tabular-nums text-success">
-                      − {formatAmount(totals.discount, data.currency)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Taxable value</span>
-                    <span className="font-medium tabular-nums">
-                      {formatAmount(totals.taxableValue, data.currency)}
-                    </span>
-                  </div>
-                </>
-              )}
-              {totals.taxLines.map((line, i) => (
-                <div key={i} className="flex justify-between">
-                  <span className="text-muted-foreground">{line.label}</span>
-                  <span className="font-medium tabular-nums">
-                    {formatAmount(line.amount, data.currency)}
-                  </span>
-                </div>
-              ))}
-              {totals.shipping > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Shipping / other</span>
-                  <span className="font-medium tabular-nums">
-                    {formatAmount(totals.shipping, data.currency)}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <Separator />
-
-            <div className="flex justify-between items-baseline">
-              <span className="text-sm font-semibold">Total due</span>
-              <span className="text-xl font-bold tabular-nums text-brand">
-                {formatAmount(totals.grandTotal, data.currency)}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Feedback */}
       {error && (
-        <p className="text-xs text-destructive flex items-center gap-1.5 justify-center">
+        <p className="text-xs text-destructive flex items-center gap-1.5 justify-center mb-4">
           <AlertTriangle className="w-3.5 h-3.5" />
           {error}
         </p>
       )}
-      {notice && (
-        <p className="text-xs text-success flex items-center gap-1.5 justify-center">
-          <Check className="w-3.5 h-3.5" />
-          {notice}
-        </p>
-      )}
 
-      {/* Actions */}
-      <div className="flex flex-wrap items-center justify-center gap-2 pb-4">
+      <div className="flex flex-col items-center gap-3">
         <Button
-          variant="outline"
-          onClick={handleSave}
-          disabled={busy !== null}
-          className="gap-1.5 text-xs"
-        >
-          {busy === "save" ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Save className="w-3.5 h-3.5" />
-          )}
-          {savedId ? "Update saved invoice" : "Save invoice"}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={handleShare}
-          disabled={busy !== null}
-          className="gap-1.5 text-xs"
-        >
-          {busy === "share" ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Share2 className="w-3.5 h-3.5" />
-          )}
-          Share
-        </Button>
-        <Button
-          onClick={handleDownload}
-          disabled={busy !== null}
+          onClick={handleDetect}
+          disabled={!file}
           className="gap-2 bg-brand hover:bg-brand/90 text-brand-foreground font-semibold rounded-xl px-6 h-10"
         >
-          {busy === "download" ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Download className="w-4 h-4" />
-          )}
-          Download PDF
+          <ScanSearch className="w-4 h-4" />
+          Detect fields
         </Button>
+        <p className="text-[11px] text-muted-foreground/50">
+          {!file ? "Add your document to continue." : "Ready to read the document's fields."}
+        </p>
       </div>
     </div>
   );

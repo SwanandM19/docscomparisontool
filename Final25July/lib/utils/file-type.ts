@@ -9,6 +9,7 @@ export function resolveFileType(mimeType: string, fileName: string): DocumentFil
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
   if (mimeType === "application/pdf" || ext === "pdf") return "pdf";
   if (mimeType.startsWith("image/")) return "image";
+  if (mimeType === "application/rtf" || mimeType === "text/rtf" || ext === "rtf") return "rtf";
   if (
     ["xlsx", "xls", "csv"].includes(ext) ||
     mimeType.includes("spreadsheet") ||

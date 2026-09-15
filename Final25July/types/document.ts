@@ -5,7 +5,7 @@
 
 export type DocumentKind = "PO" | "GRN" | "Invoice" | "Contract";
 
-export type DocumentFileType = "pdf" | "image" | "excel" | "word";
+export type DocumentFileType = "pdf" | "image" | "excel" | "word" | "rtf";
 
 export type DocumentStatus =
   | "uploaded"

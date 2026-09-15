@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Languages,
   Upload,
@@ -18,21 +18,35 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { uploadFiles } from "@/lib/uploadthing/react";
-import { translateDocumentFile, ApiClientError, type TranslateResponse } from "@/lib/api-client";
 import {
-  DIRECTION_LABELS,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+import { buildRtfDocument, downloadRtf, type RtfBlock } from "@/lib/rtf";
+import { uploadFiles } from "@/lib/uploadthing/react";
+import {
+  translateDocumentFile,
+  getTranslation,
+  renderTranslationPdf,
+  ApiClientError,
+  type TranslateResponse,
+} from "@/lib/api-client";
+import {
   LANGUAGE_LABELS,
+  LANGUAGE_CODES,
   directionSource,
   directionTarget,
+  directionLabel,
   type TranslationDirection,
+  type TranslationLanguage,
 } from "@/types/translation";
 
-const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.docx,.doc,.txt,.csv,.xlsx,.xls";
+const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.docx,.doc,.rtf,.txt,.csv,.xlsx,.xls";
 const MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024;
-
-const DIRECTIONS: TranslationDirection[] = ["en-mr", "mr-en"];
 
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -62,7 +76,12 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-export default function DocumentTranslation() {
+interface DocumentTranslationProps {
+  /** When set, loads and shows this past translation instead of the upload flow. */
+  initialTranslationId?: string;
+}
+
+export default function DocumentTranslation({ initialTranslationId }: DocumentTranslationProps) {
   const [file, setFile] = useState<File | null>(null);
   const [direction, setDirection] = useState<TranslationDirection>("en-mr");
   const [phase, setPhase] = useState<"upload" | "running" | "results">("upload");
@@ -70,7 +89,34 @@ export default function DocumentTranslation() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TranslateResponse | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!initialTranslationId) return;
+    let cancelled = false;
+    setPhase("running");
+    setProgressLabel("Loading saved translation…");
+    setError(null);
+
+    getTranslation(initialTranslationId)
+      .then((data) => {
+        if (cancelled) return;
+        setDirection(data.direction);
+        setResult(data);
+        setPhase("results");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof ApiClientError ? err.message : "Could not load this translation.");
+        setPhase("upload");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialTranslationId]);
 
   const selectFile = useCallback((incoming: FileList | File[]) => {
     const picked = Array.from(incoming)[0];
@@ -83,11 +129,28 @@ export default function DocumentTranslation() {
     setFile(picked);
   }, []);
 
+  const sourceLang = directionSource(direction);
+  const targetLang = directionTarget(direction);
+
+  const setSourceLang = (lang: TranslationLanguage) => {
+    const nextTarget = lang === targetLang ? LANGUAGE_CODES.find((c) => c !== lang)! : targetLang;
+    setDirection(`${lang}-${nextTarget}` as TranslationDirection);
+  };
+
+  const setTargetLang = (lang: TranslationLanguage) => {
+    const nextSource = lang === sourceLang ? LANGUAGE_CODES.find((c) => c !== lang)! : sourceLang;
+    setDirection(`${nextSource}-${lang}` as TranslationDirection);
+  };
+
+  const swapLanguages = () => setDirection(`${targetLang}-${sourceLang}` as TranslationDirection);
+
   const reset = () => {
     setFile(null);
     setResult(null);
     setError(null);
     setProgressLabel("");
+    setPdfError(null);
+    setPdfBusy(false);
     setPhase("upload");
   };
 
@@ -98,9 +161,19 @@ export default function DocumentTranslation() {
 
     try {
       setProgressLabel(`Uploading ${file.name}…`);
-      const uploaded = await uploadFiles("genericUploader", { files: [file] });
-      const serverData = uploaded?.[0]?.serverData;
-      if (!serverData) throw new Error(`Upload failed for ${file.name}.`);
+      let serverData;
+      try {
+        const uploaded = await uploadFiles("genericUploader", { files: [file] });
+        serverData = uploaded?.[0]?.serverData;
+      } catch (uploadErr) {
+        console.error("[translation] upload failed:", uploadErr);
+        throw new Error(
+          uploadErr instanceof Error
+            ? `Upload failed: ${uploadErr.message}`
+            : `Could not upload "${file.name}".`
+        );
+      }
+      if (!serverData) throw new Error(`Upload of "${file.name}" did not complete.`);
 
       setProgressLabel(
         `Translating ${LANGUAGE_LABELS[directionSource(direction)]} → ${
@@ -117,9 +190,14 @@ export default function DocumentTranslation() {
         },
       });
 
+      if (!data?.result?.translatedText) {
+        throw new Error("The translator returned an empty result. Please try again.");
+      }
+
       setResult(data);
       setPhase("results");
     } catch (err) {
+      console.error("[translation] failed:", err);
       setError(
         err instanceof ApiClientError
           ? err.message
@@ -131,10 +209,68 @@ export default function DocumentTranslation() {
     }
   };
 
+  /**
+   * Downloads a side-by-side .rtf document (original + translation) that opens
+   * cleanly in Word / LibreOffice so the two versions can be compared there.
+   * Works the same for English→Marathi and Marathi→English.
+   */
+  const handleDownloadRtf = () => {
+    if (!result) return;
+    const sourceLabel = LANGUAGE_LABELS[directionSource(result.direction)];
+    const targetLabel = LANGUAGE_LABELS[directionTarget(result.direction)];
+    const blocks: RtfBlock[] = [
+      { style: "h1", text: result.file.fileName },
+      {
+        style: "p",
+        text: `${directionLabel(result.direction)}  ·  Translation confidence ${Math.round(
+          result.result.confidence * 100
+        )}%`,
+      },
+      { style: "h2", text: `Original: ${sourceLabel}` },
+      { style: "p", text: result.result.sourceText || "No source text was transcribed." },
+      { style: "h2", text: `Translation: ${targetLabel}` },
+      { style: "p", text: result.result.translatedText },
+    ];
+    const base = result.file.fileName.replace(/\.[^.]+$/, "");
+    downloadRtf(`${base}-${result.direction}.rtf`, buildRtfDocument(blocks));
+  };
+
+  /** Downloads a formatted PDF (original + translation), Devanagari-safe. */
+  const handleDownloadPdf = async () => {
+    if (!result) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const blob = await renderTranslationPdf({
+        fileName: result.file.fileName,
+        direction: result.direction,
+        sourceText: result.result.sourceText,
+        translatedText: result.result.translatedText,
+        confidence: result.result.confidence,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${result.file.fileName.replace(/\.[^.]+$/, "")}-${directionTarget(
+        result.direction
+      )}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setPdfError(
+        err instanceof ApiClientError ? err.message : "Could not generate the PDF."
+      );
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   /** Downloads the translation as a UTF-8 .txt file (Devanagari-safe). */
   const handleDownload = () => {
     if (!result) return;
-    const header = `${result.file.fileName}\n${DIRECTION_LABELS[result.direction]}\n${"—".repeat(40)}\n\n`;
+    const header = `${result.file.fileName}\n${directionLabel(result.direction)}\n${"—".repeat(40)}\n\n`;
     const blob = new Blob([header + result.result.translatedText], {
       type: "text/plain;charset=utf-8",
     });
@@ -164,7 +300,7 @@ export default function DocumentTranslation() {
         </p>
         <p className="text-[11px] text-muted-foreground/60 max-w-sm">
           The AI is reading the whole document so it can translate in context and keep the original
-          layout — headings, tables, and line breaks stay where they were.
+          layout, headings, tables, and line breaks stay where they were.
         </p>
       </div>
     );
@@ -184,7 +320,7 @@ export default function DocumentTranslation() {
             <div className="flex items-center gap-2 mb-1">
               <h2 className="text-xl font-bold tracking-tight truncate">{result.file.fileName}</h2>
               <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold shrink-0">
-                {DIRECTION_LABELS[result.direction]}
+                {directionLabel(result.direction)}
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -196,16 +332,36 @@ export default function DocumentTranslation() {
               <RefreshCcw className="w-3.5 h-3.5" />
               New translation
             </Button>
+            <Button variant="outline" size="sm" onClick={handleDownload} className="gap-1.5 text-xs">
+              <Download className="w-3.5 h-3.5" />
+              .txt
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadRtf} className="gap-1.5 text-xs">
+              <Download className="w-3.5 h-3.5" />
+              .rtf
+            </Button>
             <Button
               size="sm"
-              onClick={handleDownload}
+              onClick={handleDownloadPdf}
+              disabled={pdfBusy}
               className="gap-1.5 text-xs bg-brand hover:bg-brand/90 text-brand-foreground"
             >
-              <Download className="w-3.5 h-3.5" />
-              Download .txt
+              {pdfBusy ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              Download .pdf
             </Button>
           </div>
         </div>
+
+        {pdfError && (
+          <p className="text-xs text-destructive flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {pdfError}
+          </p>
+        )}
 
         {/* Warnings */}
         {translation.directionMismatch && (
@@ -219,7 +375,7 @@ export default function DocumentTranslation() {
                   ? "another language"
                   : LANGUAGE_LABELS[translation.detectedLanguage]}
               </span>
-              . It was still translated into {targetLabel} — double-check the result, or switch the
+              . It was still translated into {targetLabel}. Double-check the result, or switch the
               direction and try again.
             </p>
           </div>
@@ -265,8 +421,9 @@ export default function DocumentTranslation() {
         </div>
 
         <p className="text-[11px] text-muted-foreground/60 text-center">
-          Machine translation — have a fluent speaker review anything legally or financially
-          binding before you rely on it.
+          Download as .pdf for a finished, shareable copy, or .rtf to open in Word / LibreOffice
+          with the original and the translation stacked for side-by-side review. Machine
+          translation. Have a fluent speaker check anything legally or financially binding.
         </p>
       </div>
     );
@@ -280,67 +437,84 @@ export default function DocumentTranslation() {
           <h2 className="text-2xl font-bold tracking-tight">Document Translation</h2>
           <Badge className="bg-brand/10 text-brand border-brand/20 text-[10px] font-semibold">
             <Sparkles className="w-3 h-3 mr-1" />
-            English ⇄ Marathi
+            {LANGUAGE_LABELS[sourceLang]} ⇄ {LANGUAGE_LABELS[targetLang]}
           </Badge>
         </div>
         <p className="text-muted-foreground max-w-xl mx-auto text-sm">
-          Upload a document and get it translated between English and Marathi. The layout is kept
-          intact, and numbers, dates, GSTINs, and invoice references are left exactly as they are.
+          Upload a PDF, Word, or RTF document and get a word-for-word translation into the
+          language you pick below. The layout is kept intact, and numbers, dates, GSTINs, and
+          invoice references are left exactly as they are.
         </p>
       </div>
 
-      {/* Direction picker */}
+      {/* Language picker */}
       <Card className="border-border/80 shadow-sm mb-4">
         <CardHeader className="py-4 px-6 border-b border-border/40">
           <CardTitle className="text-sm font-semibold">Translation direction</CardTitle>
           <CardDescription className="text-xs">
-            Pick which way to translate — this pair only
+            Choose the source and target language for this document
           </CardDescription>
         </CardHeader>
         <CardContent className="p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {DIRECTIONS.map((dir) => {
-              const isActive = direction === dir;
-              return (
-                <button
-                  key={dir}
-                  onClick={() => setDirection(dir)}
-                  aria-pressed={isActive}
-                  className={cn(
-                    "flex items-center justify-center gap-3 rounded-xl border-2 px-4 py-3.5 transition-all duration-200",
-                    isActive
-                      ? "border-brand bg-brand/[0.06]"
-                      : "border-border/60 hover:border-border hover:bg-secondary/40"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "text-sm font-semibold",
-                      isActive ? "text-brand" : "text-foreground"
-                    )}
-                  >
-                    {LANGUAGE_LABELS[directionSource(dir)]}
-                  </span>
-                  <ArrowRight
-                    className={cn(
-                      "w-4 h-4",
-                      isActive ? "text-brand" : "text-muted-foreground/50"
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "text-sm font-semibold",
-                      isActive ? "text-brand" : "text-foreground"
-                    )}
-                  >
-                    {LANGUAGE_LABELS[directionTarget(dir)]}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+            <div className="flex-1 space-y-1.5">
+              <label className="text-[11px] font-semibold text-muted-foreground">Source language</label>
+              <Select value={sourceLang} onValueChange={(val) => val && setSourceLang(val as TranslationLanguage)}>
+                <SelectTrigger className="w-full h-10 text-sm bg-secondary/50 border-border">
+                  <SelectValue placeholder="Source language…">
+                    {(val: unknown) => LANGUAGE_LABELS[val as TranslationLanguage] ?? "Source language…"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" sideOffset={6}>
+                  {LANGUAGE_CODES.map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {LANGUAGE_LABELS[code]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <button
+              type="button"
+              onClick={swapLanguages}
+              aria-label="Swap source and target languages"
+              title="Swap languages"
+              className="shrink-0 w-9 h-9 mb-0.5 rounded-lg border border-border/70 bg-secondary/40 hover:bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors cursor-pointer self-center sm:self-end"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <div className="flex-1 space-y-1.5">
+              <label className="text-[11px] font-semibold text-muted-foreground">Target language</label>
+              <Select value={targetLang} onValueChange={(val) => val && setTargetLang(val as TranslationLanguage)}>
+                <SelectTrigger className="w-full h-10 text-sm bg-secondary/50 border-border">
+                  <SelectValue placeholder="Target language…">
+                    {(val: unknown) => LANGUAGE_LABELS[val as TranslationLanguage] ?? "Target language…"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" sideOffset={6}>
+                  {LANGUAGE_CODES.filter((code) => code !== sourceLang).map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {LANGUAGE_LABELS[code]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Handwritten/readability note */}
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 mb-4">
+        <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <span className="font-semibold text-foreground">Note:</span> If a document is
+          handwritten and not sufficiently readable, the accuracy of the generated results may
+          be affected.
+        </p>
+      </div>
 
       {/* Dropzone */}
       <Card
@@ -382,7 +556,8 @@ export default function DocumentTranslation() {
               {file ? "Choose a different document" : "Add a document"}
             </span>
             <span className="text-[11px] text-muted-foreground/60">
-              PDF, image, Word, Excel/CSV, or text · up to 16MB · drag &amp; drop or click
+              PDF, Word (.docx), RTF (.rtf), image, Excel/CSV, or text · {LANGUAGE_LABELS[sourceLang]} ·
+              up to 16MB · drag &amp; drop or click
             </span>
           </button>
 
@@ -419,7 +594,7 @@ export default function DocumentTranslation() {
           className="gap-2 bg-brand hover:bg-brand/90 text-brand-foreground font-semibold rounded-xl px-6 h-10"
         >
           <Languages className="w-4 h-4" />
-          Translate {DIRECTION_LABELS[direction]}
+          Translate {directionLabel(direction)}
         </Button>
         <p className="text-[11px] text-muted-foreground/50">
           {file ? "Ready to translate." : "Add a document to continue."}

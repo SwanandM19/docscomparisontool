@@ -20,8 +20,8 @@ export const GET = withErrorHandling(async (req: Request) => {
   await connectToDatabase();
 
   // Regular users only ever see their own activity; admins see everything.
-  // This is the single chokepoint Dashboard Overview, Vendor Analytics, and
-  // History & Audits all read through, so scoping it here covers all three.
+  // This is the single chokepoint the Overview page and Vendor Analytics
+  // both read through, so scoping it here covers both.
   const isAdmin = session.role === "admin";
   const auditFilter = isAdmin ? {} : { user: session.email };
   const comparisonFilter: Record<string, unknown> = isAdmin ? {} : { createdBy: session.email };
@@ -83,6 +83,8 @@ export const GET = withErrorHandling(async (req: Request) => {
       status: a.status,
       details: a.details,
       relatedComparisonId: a.relatedComparisonId?.toString() ?? null,
+      relatedIntelligentComparisonId: a.relatedIntelligentComparisonId?.toString() ?? null,
+      relatedTranslationId: a.relatedTranslationId?.toString() ?? null,
     })),
     pagination: {
       page: query.page,

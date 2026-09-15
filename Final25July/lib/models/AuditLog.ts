@@ -9,6 +9,8 @@ export interface AuditLogDoc extends MongooseDocument {
   status: AuditStatus;
   details: string;
   relatedComparisonId: Types.ObjectId | null;
+  relatedIntelligentComparisonId: Types.ObjectId | null;
+  relatedTranslationId: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,6 +23,12 @@ const AuditLogSchema = new Schema<AuditLogDoc>(
     status: { type: String, enum: ["completed", "warning", "pending"], default: "completed" },
     details: { type: String, default: "" },
     relatedComparisonId: { type: Schema.Types.ObjectId, ref: "Comparison", default: null },
+    relatedIntelligentComparisonId: {
+      type: Schema.Types.ObjectId,
+      ref: "IntelligentComparison",
+      default: null,
+    },
+    relatedTranslationId: { type: Schema.Types.ObjectId, ref: "Translation", default: null },
   },
   { timestamps: true }
 );
@@ -39,6 +47,8 @@ export async function logAudit(entry: {
   status: AuditStatus;
   details: string;
   relatedComparisonId?: string | null;
+  relatedIntelligentComparisonId?: string | null;
+  relatedTranslationId?: string | null;
 }) {
   return AuditLogModel.create({
     action: entry.action,
@@ -47,5 +57,7 @@ export async function logAudit(entry: {
     status: entry.status,
     details: entry.details,
     relatedComparisonId: entry.relatedComparisonId ?? null,
+    relatedIntelligentComparisonId: entry.relatedIntelligentComparisonId ?? null,
+    relatedTranslationId: entry.relatedTranslationId ?? null,
   });
 }

@@ -23,6 +23,8 @@ import type {
   TranslationSourceFile,
 } from "@/types/translation";
 import type { InvoiceData, InvoiceRecord, InvoiceStatus } from "@/types/invoice";
+import type { DocumentSummary } from "@/types/summary";
+import type { DocumentFieldsResult, FieldValueInput, InvoiceFillResult } from "@/types/invoice-fill";
 
 export class ApiClientError extends Error {
   status: number;
@@ -214,9 +216,82 @@ export function getIntelligentComparison(id: string) {
   );
 }
 
+// ── /api/summarize ──
+export function summarizeFiles(
+  files: { fileUrl: string; fileName: string; fileSize: number; mimeType: string }[]
+) {
+  return request<{ documents: DocumentSummary[] }>("/api/summarize", {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+}
+
+// ── /api/summarize-pdf ──
+export async function renderSummaryPdf(documents: DocumentSummary[]): Promise<Blob> {
+  const res = await fetch("/api/summarize-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ documents }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiClientError(
+      body?.error?.message ?? "Could not generate the summary PDF",
+      res.status,
+      body?.error?.code ?? "SUMMARY_PDF_FAILED",
+      body?.error?.details
+    );
+  }
+  return res.blob();
+}
+
+// ── /api/document-fields ──
+export function detectDocumentFields(payload: {
+  file: { fileUrl: string; fileName: string; fileSize: number; mimeType: string };
+}) {
+  return request<DocumentFieldsResult>("/api/document-fields", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── /api/invoice-fill ──
+export function fillInvoiceDocument(payload: {
+  file: { fileUrl: string; fileName: string; fileSize: number; mimeType: string };
+  fields: FieldValueInput[];
+  notes?: string;
+}) {
+  return request<InvoiceFillResult>("/api/invoice-fill", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── /api/document-fill-pdf ──
+export async function renderFilledDocumentPdf(payload: {
+  documentType: string;
+  content: string;
+}): Promise<Blob> {
+  const res = await fetch("/api/document-fill-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiClientError(
+      body?.error?.message ?? "Could not generate the PDF",
+      res.status,
+      body?.error?.code ?? "DOCUMENT_FILL_PDF_FAILED",
+      body?.error?.details
+    );
+  }
+  return res.blob();
+}
+
 // ── /api/translate ──
 export interface TranslateResponse {
-  id: string;
+  id: string | null;
   file: TranslationSourceFile;
   direction: TranslationDirection;
   result: TranslationResult;
@@ -232,8 +307,37 @@ export function translateDocumentFile(payload: {
   });
 }
 
+// ── /api/translate-pdf ──
+export async function renderTranslationPdf(payload: {
+  fileName: string;
+  direction: TranslationDirection;
+  sourceText: string;
+  translatedText: string;
+  confidence: number;
+}): Promise<Blob> {
+  const res = await fetch("/api/translate-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiClientError(
+      body?.error?.message ?? "Could not generate the translation PDF",
+      res.status,
+      body?.error?.code ?? "TRANSLATION_PDF_FAILED",
+      body?.error?.details
+    );
+  }
+  return res.blob();
+}
+
 export function getTranslations(limit = 10) {
   return request<{ translations: TranslationRecord[] }>(`/api/translate?limit=${limit}`);
+}
+
+export function getTranslation(id: string) {
+  return request<TranslateResponse>(`/api/translate/${encodeURIComponent(id)}`);
 }
 
 // ── /api/invoices ──
@@ -287,10 +391,10 @@ export function getAssistantConversation() {
   return request<{ messages: AssistantMessage[]; updatedAt: string | null }>("/api/assistant");
 }
 
-export function sendAssistantMessage(message: string) {
+export function sendAssistantMessage(message: string, section?: string) {
   return request<{ message: AssistantMessage; messages: AssistantMessage[] }>("/api/assistant", {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, section }),
   });
 }
 
@@ -309,6 +413,8 @@ export interface HistoryResponse {
     status: "completed" | "warning" | "pending";
     details: string;
     relatedComparisonId: string | null;
+    relatedIntelligentComparisonId: string | null;
+    relatedTranslationId: string | null;
   }[];
   pagination: { page: number; limit: number; total: number; totalPages: number };
   comparisons: { id: string; mode: ComparisonMode; status: string; matchScore: number; createdAt: string }[];

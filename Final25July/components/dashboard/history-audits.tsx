@@ -47,9 +47,15 @@ const PAGE_SIZE = 10;
 
 interface HistoryAuditsProps {
   onViewComparison?: (id: string) => void;
+  onViewIntelligentComparison?: (id: string) => void;
+  onViewTranslation?: (id: string) => void;
 }
 
-export default function HistoryAudits({ onViewComparison }: HistoryAuditsProps) {
+export default function HistoryAudits({
+  onViewComparison,
+  onViewIntelligentComparison,
+  onViewTranslation,
+}: HistoryAuditsProps) {
   const { user } = useSession();
   const isAdmin = user?.role === "admin";
 
@@ -110,7 +116,7 @@ export default function HistoryAudits({ onViewComparison }: HistoryAuditsProps) 
       {/* Header */}
       <div className="flex items-start justify-between mb-8 flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">History & Audits</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Overview</h2>
           <p className="text-muted-foreground mt-1">
             Complete audit trail of all document operations and system events
           </p>
@@ -205,14 +211,23 @@ export default function HistoryAudits({ onViewComparison }: HistoryAuditsProps) 
                     const config = statusConfig[entry.status];
                     const StatusIcon = config.icon;
                     const comparisonId = entry.relatedComparisonId;
+                    const intelligentId = entry.relatedIntelligentComparisonId;
+                    const translationId = entry.relatedTranslationId;
+                    const handleOpen = comparisonId
+                      ? () => onViewComparison?.(comparisonId)
+                      : intelligentId
+                        ? () => onViewIntelligentComparison?.(intelligentId)
+                        : translationId
+                          ? () => onViewTranslation?.(translationId)
+                          : undefined;
                     return (
                       <tr
                         key={entry.id}
-                        onClick={comparisonId ? () => onViewComparison?.(comparisonId) : undefined}
-                        title={comparisonId ? "View this comparison" : undefined}
+                        onClick={handleOpen}
+                        title={handleOpen ? "View this result" : undefined}
                         className={cn(
                           "border-b border-border/30 last:border-0 hover:bg-slate-100/60 dark:hover:bg-slate-800/40 transition-colors duration-150 group",
-                          comparisonId && "cursor-pointer"
+                          handleOpen && "cursor-pointer"
                         )}
                       >
                         <td className="px-5 py-3.5">
