@@ -336,11 +336,7 @@ export default function DocumentTranslation({ initialTranslationId }: DocumentTr
               <Download className="w-3.5 h-3.5" />
               .txt
             </Button>
-            <Button variant="outline" size="sm" onClick={handleDownloadRtf} className="gap-1.5 text-xs">
-              <Download className="w-3.5 h-3.5" />
-              .rtf
-            </Button>
-            <Button
+            {/* <Button
               size="sm"
               onClick={handleDownloadPdf}
               disabled={pdfBusy}
@@ -352,7 +348,7 @@ export default function DocumentTranslation({ initialTranslationId }: DocumentTr
                 <Download className="w-3.5 h-3.5" />
               )}
               Download .pdf
-            </Button>
+            </Button> */}
           </div>
         </div>
 
